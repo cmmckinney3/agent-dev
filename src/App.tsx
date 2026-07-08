@@ -30,13 +30,23 @@ import {
   withPaneSizes,
 } from "./layout";
 import { Task, TaskDraft, TaskStatus } from "./tasks";
+import UsagePage from "./UsagePage";
 import {
+  MAX_RUN_RECORDS,
+  normalizeRuns,
+  RunMeta,
+  RunRecord,
+} from "./usage";
+import {
+  ActivityIcon,
   BotIcon,
   BroadcastIcon,
+  CrucibleIcon,
   FolderIcon,
   PlayIcon,
   SendIcon,
   StopIcon,
+  TerminalIcon,
 } from "./icons";
 import "./App.css";
 
@@ -69,6 +79,8 @@ interface Persisted {
   boardCollapsed: boolean;
   /** User-editable agent catalog; older blobs without one get the defaults. */
   agents: AgentConfig[];
+  /** Run history for the Usage page; older blobs without one start empty. */
+  usage: RunRecord[];
 }
 
 function loadPersisted(): Partial<Persisted> & {
@@ -77,6 +89,7 @@ function loadPersisted(): Partial<Persisted> & {
   layout: PaneColumn[];
   slotAgents: Record<string, string>;
   slotNames: Record<string, string>;
+  usage: RunRecord[];
 } {
   const read = (key: string): Partial<Persisted> => {
     try {
@@ -147,6 +160,8 @@ function loadPersisted(): Partial<Persisted> & {
     targets: forLayout(data.targets),
     tasks,
     resetCount,
+    // Runs that were live when the app closed come back as `interrupted`.
+    usage: normalizeRuns(data.usage),
   };
 }
 const persisted = loadPersisted();
@@ -290,6 +305,9 @@ function SplitDivider({
 const pairPct = (a: number, b: number) => Math.round((a / (a + b)) * 100);
 
 export default function App() {
+  // Which page is on screen. The workspace stays mounted (hidden via CSS)
+  // while Usage is shown, so live terminals are never torn down by a switch.
+  const [page, setPage] = useState<"workspace" | "usage">("workspace");
   const [cwd, setCwd] = useState(persisted.cwd ?? "");
   const [broadcast, setBroadcast] = useState("");
   // The agent catalog — user-editable via the Agents manager dialog.
@@ -328,6 +346,8 @@ export default function App() {
     targetId: string;
     placement: PaneDropPlacement;
   } | null>(null);
+  // Run history feeding the Usage page (persisted, capped at MAX_RUN_RECORDS).
+  const [usage, setUsage] = useState<RunRecord[]>(persisted.usage);
   // How many tasks were reset Running→Backlog on this load (restart notice).
   const [resetNotice, setResetNotice] = useState(persisted.resetCount ?? 0);
   // Monotonic counters for task/agent ids, seeded past anything restored.
@@ -342,6 +362,12 @@ export default function App() {
       const n = parseInt(a.id.replace(/^agent-/, ""), 10);
       return Number.isFinite(n) && n > max ? n : max;
     }, 0),
+  );
+  const runSeq = useRef(
+    maxSeq(
+      persisted.usage.map((r) => r.id),
+      "run",
+    ),
   );
   // Monotonic pane/column id counters — ids are never reused, so a new pane
   // can't inherit a dead session's backend key.
@@ -365,6 +391,7 @@ export default function App() {
       tasks,
       boardCollapsed,
       agents,
+      usage,
     };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -381,6 +408,7 @@ export default function App() {
     tasks,
     boardCollapsed,
     agents,
+    usage,
   ]);
   const [justSent, setJustSent] = useState(false);
   const refs = useRef<Record<string, AgentPaneHandle | null>>({});
@@ -765,6 +793,12 @@ export default function App() {
       program: agent.program,
       initialArgs: args,
       cwd: launchCwd,
+      run: {
+        agentId: task.agentId,
+        taskId: task.id,
+        taskTitle: task.title,
+        mode: task.mode,
+      },
     });
     setPaneTask((prev) => ({ ...prev, [slot]: id }));
     updateTask(id, {
@@ -797,13 +831,69 @@ export default function App() {
     );
   };
 
-  // Centralized status handling: advance/cleanup task cards on pane lifecycle.
+  // ---- Usage history ----
+  // Close the slot's open run record, if any. "idle" = stopped from the app,
+  // "exited" = the process ended on its own (exitCode says how).
+  const closeRun = (
+    slotId: string,
+    outcome: "completed" | "stopped",
+    exitCode?: number,
+  ) =>
+    setUsage((prev) =>
+      prev.map((r) =>
+        r.slotId === slotId && r.outcome === "running"
+          ? { ...r, outcome, endedAt: Date.now(), exitCode }
+          : r,
+      ),
+    );
+
+  // Record a fresh launch. Snapshots the agent/session names so history stays
+  // readable after catalog edits, renames, or pane closes.
+  const openRun = (slotId: string, meta: RunMeta) => {
+    runSeq.current += 1;
+    const record: RunRecord = {
+      id: `run-${runSeq.current}`,
+      agentId: meta.agentId,
+      agentName: agents.find((a) => a.id === meta.agentId)?.name ?? meta.agentId,
+      slotId,
+      session: slotTitle(slotId),
+      taskId: meta.taskId,
+      taskTitle: meta.taskTitle,
+      mode: meta.mode,
+      startedAt: Date.now(),
+      outcome: "running",
+    };
+    setUsage((prev) => {
+      // Restarting a live pane replaces its process without an idle/exited
+      // step in between — the old record closes as stopped here.
+      const closed = prev.map((r) =>
+        r.slotId === slotId && r.outcome === "running"
+          ? { ...r, outcome: "stopped" as const, endedAt: Date.now() }
+          : r,
+      );
+      return [...closed, record].slice(-MAX_RUN_RECORDS);
+    });
+  };
+
+  // Drop finished history; live runs stay so their records can still close.
+  const clearUsage = () =>
+    setUsage((prev) => prev.filter((r) => r.outcome === "running"));
+
+  // Centralized status handling: record usage and advance/cleanup task cards
+  // on pane lifecycle.
   const handleStatusChange = (
     slot: string,
     status: AgentStatus,
     info?: StatusInfo,
   ) => {
     setStatuses((prev) => ({ ...prev, [slot]: status }));
+    if (status === "running") {
+      if (info?.run) openRun(slot, info.run);
+    } else if (status === "exited") {
+      closeRun(slot, "completed", info?.exitCode);
+    } else {
+      closeRun(slot, "stopped");
+    }
     const taskId = paneTask[slot];
     if (!taskId) return;
     if (status === "exited") {
@@ -873,10 +963,30 @@ export default function App() {
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">
-            <BroadcastIcon width={18} height={18} />
+            <CrucibleIcon width={19} height={19} />
           </span>
-          Agent<span>Dev</span>
+          Crucible
         </div>
+        <div className="topbar-divider" />
+        <nav className="page-switch" aria-label="Page">
+          <button
+            type="button"
+            className={`page-btn ${page === "workspace" ? "on" : ""}`}
+            aria-current={page === "workspace" ? "page" : undefined}
+            onClick={() => setPage("workspace")}
+          >
+            <TerminalIcon width={14} height={14} /> Workspace
+          </button>
+          <button
+            type="button"
+            className={`page-btn ${page === "usage" ? "on" : ""}`}
+            aria-current={page === "usage" ? "page" : undefined}
+            title="Per-agent run history: runs, session time, and outcomes"
+            onClick={() => setPage("usage")}
+          >
+            <ActivityIcon width={14} height={14} /> Usage
+          </button>
+        </nav>
         <div className="topbar-divider" />
         <div className="field">
           <FolderIcon className="field-icon" width={15} height={15} />
@@ -950,7 +1060,13 @@ export default function App() {
         />
       )}
 
-      <div className="main-row">
+      {page === "usage" && (
+        <UsagePage runs={usage} agents={agents} onClear={clearUsage} />
+      )}
+
+      {/* The workspace is hidden, not unmounted, while Usage is shown —
+          unmounting would dispose the xterm terminals of live sessions. */}
+      <div className={`main-row ${page === "workspace" ? "" : "page-hidden"}`}>
         <TaskBoard
           tasks={tasks}
           agents={agents}
@@ -1053,7 +1169,11 @@ export default function App() {
         </main>
       </div>
 
-      <footer className={`broadcast ${justSent ? "sent" : ""}`}>
+      <footer
+        className={`broadcast ${justSent ? "sent" : ""} ${
+          page === "workspace" ? "" : "page-hidden"
+        }`}
+      >
         <div className="broadcast-lead">
           <span className="broadcast-icon">
             <BroadcastIcon width={17} height={17} />

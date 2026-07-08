@@ -1,4 +1,4 @@
-# AgentDev
+# Crucible
 
 A personal, BridgeSpace-style agent development environment. It runs interactive
 CLI coding agents side by side in one desktop window, each in its own real
@@ -31,10 +31,36 @@ Built with **Tauri (Rust) + React + TypeScript + xterm.js**.
 - **Start all / Stop all** — launch or kill every agent at once. Each pane also
   has its own Start/Restart and Stop buttons.
 - **Broadcast bar** — type one prompt and send it to every selected pane at once.
+- **Usage page** — a second page (top-bar switch) with per-agent run history.
+  See [Usage](#usage) below.
+
+## Usage
+
+The **Usage** button next to the brand switches to a page that shows how much
+each agent in the catalog actually gets used. Every launch — a pane's Start
+button, Start all, or a task card — is recorded automatically:
+
+- **Summary tiles** — runs, total session time, how many agents are live right
+  now, and how many catalog agents have been used in the selected range.
+- **Per-agent cards** — one per catalog agent (agents deleted from the catalog
+  keep their history, flagged *removed*): run count, total and average session
+  time, last active, task vs manual launches, outcome counts
+  (`ok` / `failed` / `stopped` / `interrupted`), and each agent's share of
+  session time.
+- **Recent runs** — the latest runs with session, origin task, start time,
+  duration (live runs tick up), and outcome. Runs that were live when the app
+  closed come back as *interrupted*, since their durations are unknowable.
+- **Time range** — filter everything to the last 24 h / 7 d / 30 d or all time.
+
+"Session time" is wall-clock time an agent's process was running in a pane —
+the app can't see tokens or API cost for arbitrary CLIs. History persists with
+the workspace (last 500 runs, oldest dropped); **Clear history** wipes finished
+records. Switching pages never touches running sessions — the workspace stays
+mounted, so terminals and processes carry on untouched.
 
 ## Task board
 
-The board turns AgentDev from "parallel terminals" into an agentic workflow:
+The board turns Crucible from "parallel terminals" into an agentic workflow:
 
 - **Create cards** — title, prompt, agent, an optional per-task working dir, and a
   run **mode**. The prompt seeds the agent as a launch argument (not typed in), so
@@ -103,9 +129,13 @@ npm run tauri build    # produce a standalone installer
   templates, defaults, persistence normalization) and the manager dialog.
 - `src/TaskBoard.tsx` / `src/tasks.ts` — the board rail (columns, cards, composer,
   drag-and-drop) and the task data model.
+- `src/UsagePage.tsx` / `src/usage.ts` — the Usage page and the run-history
+  model behind it (RunRecord log, normalization, per-agent aggregation).
+  Recording hooks into App's status funnel: a launch opens a record (task
+  launches pass their attribution through `start()`, the same race-avoidance
+  as program/cwd), and exit/stop closes it.
 
 ## Roadmap ideas
 
 - Real orchestration: roles (builder/reviewer), a coordinator that creates and
   assigns cards, and a mailbox/shared feed between agents.
-- Session history.

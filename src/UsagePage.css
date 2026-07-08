@@ -1,0 +1,497 @@
+/* Usage page — per-agent run history. Same GitHub-dark system as the rest of
+   the app: tokens from App.css, uppercase micro-labels, dense type scale. */
+
+.usage-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--surface);
+}
+
+.usage-inner {
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 22px 24px 40px;
+}
+
+/* ---- Header row: title + range switch + clear ---- */
+.usage-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.usage-lead {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.usage-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--text);
+}
+
+.usage-title svg {
+  color: var(--blue);
+}
+
+.usage-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Range switch — same construction as the topbar layout presets. */
+.usage-range {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  gap: 2px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.u-range-btn {
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 5px 9px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.u-range-btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.u-range-btn.on {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+/* ---- Empty state ---- */
+.usage-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 64px 20px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  text-align: center;
+}
+
+.usage-empty p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+
+.usage-empty b {
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+/* ---- Summary tiles ---- */
+.usage-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 22px;
+}
+
+.u-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.u-tile-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.u-tile-value {
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.u-tile-value.live {
+  color: var(--green);
+}
+
+.u-tile-of {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+/* ---- Section headings ---- */
+.usage-section {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.usage-none {
+  margin: 0 0 24px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+/* ---- Per-agent cards ---- */
+.usage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 10px;
+  margin-bottom: 26px;
+}
+
+.u-agent {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--agent-accent, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 11px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.u-agent.removed {
+  border-left-color: var(--border);
+  opacity: 0.85;
+}
+
+.u-agent-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.u-agent-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--agent-accent, var(--text-dim));
+  flex: 0 0 auto;
+}
+
+.u-agent-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.u-agent-prog {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+.u-agent-removed {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: var(--surface-3);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.u-agent-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--green);
+  white-space: nowrap;
+}
+
+/* ---- Stat mini-grid inside a card ---- */
+.u-agent-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 0;
+}
+
+.u-stat dt {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 2px;
+}
+
+.u-stat dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- Origin / outcome chips ---- */
+.u-agent-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.u-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.u-chip.ok {
+  color: var(--green);
+  background: rgba(63, 185, 80, 0.12);
+  border-color: transparent;
+}
+
+.u-chip.failed {
+  color: var(--red);
+  background: rgba(248, 81, 73, 0.12);
+  border-color: transparent;
+}
+
+.u-chip.interrupted {
+  color: #d29922;
+  background: rgba(210, 153, 34, 0.12);
+  border-color: transparent;
+}
+
+/* ---- Share-of-time meter (share % is also written out as text) ---- */
+.u-meter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.u-meter-track {
+  flex: 1 1 auto;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.u-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--agent-accent, var(--text-dim));
+  transition: width 0.3s ease;
+}
+
+.u-meter-val {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- Recent runs table ---- */
+.u-table-wrap {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  background: var(--surface);
+}
+
+.u-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.u-table th {
+  text-align: left;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.u-table td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.u-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.u-table tbody tr:hover td {
+  background: rgba(88, 166, 255, 0.04);
+}
+
+.u-cell-dim {
+  color: var(--text-muted);
+}
+
+.u-cell-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.u-row-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.u-row-task {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  max-width: 260px;
+}
+
+.u-row-task svg {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.u-row-task-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Outcome badges ---- */
+.u-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  border-radius: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.u-badge svg {
+  flex: 0 0 auto;
+}
+
+.u-badge.live {
+  color: var(--green);
+  background: rgba(63, 185, 80, 0.12);
+}
+
+.u-badge.ok {
+  color: var(--green);
+  background: rgba(63, 185, 80, 0.12);
+}
+
+.u-badge.failed {
+  color: var(--red);
+  background: rgba(248, 81, 73, 0.12);
+}
+
+.u-badge.stopped {
+  color: var(--text-muted);
+  background: var(--surface-3);
+}
+
+.u-badge.interrupted {
+  color: #d29922;
+  background: rgba(210, 153, 34, 0.12);
+}
+
+.u-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.6);
+  animation: pulse 1.8s ease-out infinite;
+}
+
+/* Focus ring parity with the rest of the app. */
+.u-range-btn:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+@media (max-width: 760px) {
+  .usage-head {
+    flex-wrap: wrap;
+  }
+
+  .u-agent-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

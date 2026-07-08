@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Crucible app icon</title>
+  <desc id="desc">A forge crucible holding molten code with connected agent sparks above it.</desc>
+  <defs>
+    <linearGradient id="bg" x1="176" y1="88" x2="848" y2="936" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="0.48" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#010409"/>
+    </linearGradient>
+    <linearGradient id="bowl" x1="230" y1="388" x2="794" y2="800" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#374151"/>
+      <stop offset="0.5" stop-color="#161b22"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="molten" x1="292" y1="486" x2="732" y2="676" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="0.48" stop-color="#f97316"/>
+      <stop offset="1" stop-color="#ef4444"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="300" y1="170" x2="732" y2="444" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2dd4bf"/>
+      <stop offset="0.5" stop-color="#58a6ff"/>
+      <stop offset="1" stop-color="#a371f7"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="22" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0.96 0 0.45 0 0 0.28 0 0 0.2 0 0.05 0 0 0 0.72 0"/>
+      <feBlend in="SourceGraphic"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <path d="M294 253c71-66 145-99 221-99 78 0 150 33 216 99" fill="none" stroke="#243044" stroke-width="34" stroke-linecap="round"/>
+  <path d="M330 250c56-43 117-65 182-65 66 0 126 22 180 65" fill="none" stroke="url(#spark)" stroke-width="22" stroke-linecap="round"/>
+  <path d="M512 226v152M350 300l108 86M674 300l-108 86" fill="none" stroke="#58a6ff" stroke-width="20" stroke-linecap="round" opacity="0.78"/>
+
+  <circle cx="512" cy="226" r="62" fill="#0d1117"/>
+  <circle cx="350" cy="300" r="50" fill="#0d1117"/>
+  <circle cx="674" cy="300" r="50" fill="#0d1117"/>
+  <circle cx="512" cy="226" r="33" fill="url(#spark)"/>
+  <circle cx="350" cy="300" r="27" fill="url(#spark)"/>
+  <circle cx="674" cy="300" r="27" fill="url(#spark)"/>
+
+  <path d="M226 420h572l-63 292c-18 83-78 132-159 132H448c-81 0-141-49-159-132L226 420Z" fill="#010409" opacity="0.65"/>
+  <path d="M250 398h524l-58 286c-16 79-73 126-151 126H459c-78 0-135-47-151-126L250 398Z" fill="url(#bowl)"/>
+  <path d="M250 398h524" fill="none" stroke="#cbd5e1" stroke-width="48" stroke-linecap="round"/>
+  <path d="M292 438c50-34 106-51 168-51 35 0 68 8 100 23 56 27 113 31 172 11l-21 104c-67 26-133 22-198-11-67-34-139-25-216 28l-5-24Z" fill="url(#molten)" filter="url(#glow)"/>
+  <path d="M365 622h294" fill="none" stroke="#f8fafc" stroke-width="36" stroke-linecap="round"/>
+  <path d="M428 622h168" fill="none" stroke="#f97316" stroke-width="36" stroke-linecap="round"/>
+  <path d="M393 724h238" fill="none" stroke="#111827" stroke-width="42" stroke-linecap="round" opacity="0.66"/>
+  <path d="M418 724h188" fill="none" stroke="#f8fafc" stroke-width="24" stroke-linecap="round" opacity="0.86"/>
+</svg>

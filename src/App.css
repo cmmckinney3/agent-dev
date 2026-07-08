@@ -78,19 +78,19 @@ body,
   gap: 7px;
   font-weight: 700;
   font-size: 15px;
-  letter-spacing: 0.2px;
+  letter-spacing: 0;
   color: var(--text);
   white-space: nowrap;
   user-select: none;
 }
 
 .brand-mark {
-  color: var(--blue);
+  color: #f97316;
   display: flex;
 }
 
-.brand span {
-  color: var(--blue);
+.brand-mark svg {
+  filter: drop-shadow(0 0 8px rgba(249, 115, 22, 0.28));
 }
 
 .topbar-divider {
@@ -253,6 +253,7 @@ body,
     .cwd-input,
     .field-btn,
     .layout-btn,
+    .page-btn,
     .broadcast-input,
     .target-chip,
     .pane-dir,
@@ -267,6 +268,53 @@ body,
   ):focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
+}
+
+/* ---- Page switch: Workspace ↔ Usage ---- */
+.page-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  gap: 2px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.page-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.page-btn:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+
+.page-btn.on {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+/* Hides the inactive page. The workspace is hidden (never unmounted) so live
+   xterm sessions survive switching to Usage and back. */
+.page-hidden {
+  display: none !important;
 }
 
 /* Compact pane-layout presets. The labels stay short because this lives in the

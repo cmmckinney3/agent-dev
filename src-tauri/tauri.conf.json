@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "agent-dev",
+  "productName": "Crucible",
   "version": "0.1.0",
-  "identifier": "com.admin.agent-dev",
+  "identifier": "com.admin.crucible",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "AgentDev",
+        "title": "Crucible",
         "width": 1280,
         "height": 820
       }

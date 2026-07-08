@@ -1,4 +1,4 @@
-// AgentDev backend: runs interactive CLI agents (Claude Code, Codex) inside
+// Crucible backend: runs interactive CLI agents (Claude Code, Codex) inside
 // pseudo-terminals and streams their I/O to the frontend.
 
 use std::collections::HashMap;

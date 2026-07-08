@@ -36,13 +36,16 @@ import {
   type PaneDropPlacement,
   type PaneMoveDirection,
 } from "./layout";
+import type { RunMeta } from "./usage";
 import "@xterm/xterm/css/xterm.css";
 
 export type AgentStatus = "idle" | "running" | "exited";
 
-/** Extra detail accompanying a status change (currently just the exit code). */
+/** Extra detail accompanying a status change. */
 export interface StatusInfo {
   exitCode?: number;
+  /** Launch attribution, echoed on the "running" transition (usage history). */
+  run?: RunMeta;
 }
 
 export interface StartOptions {
@@ -56,6 +59,12 @@ export interface StartOptions {
   program?: string;
   /** Override the launch directory for this run (same race avoidance). */
   cwd?: string;
+  /**
+   * Launch attribution echoed back through onStatusChange("running") so App
+   * can record the run. Task launches pass it explicitly (same race avoidance
+   * as program/cwd); manual starts default to the pane's current agent.
+   */
+  run?: RunMeta;
 }
 
 export interface AgentPaneHandle {
@@ -350,7 +359,7 @@ const AgentPane = forwardRef<AgentPaneHandle, AgentPaneProps>(
       fitRef.current?.fit();
       term.clear();
       term.reset();
-      updateStatus("running");
+      updateStatus("running", { run: opts?.run ?? { agentId } });
       try {
         await invoke("spawn_agent", {
           id,

@@ -56,6 +56,17 @@ export const BroadcastIcon = (p: IconProps) => (
   </Base>
 );
 
+export const CrucibleIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M5 10h14l-1.6 7.2A2.4 2.4 0 0 1 15 19H9a2.4 2.4 0 0 1-2.4-1.8L5 10Z" />
+    <path d="M7 10c.9-1.3 2.5-2 5-2s4.1.7 5 2" />
+    <path d="M9 14h6" />
+    <path d="M12 5V3" />
+    <path d="M7.5 6 6 4.5" />
+    <path d="M16.5 6 18 4.5" />
+  </Base>
+);
+
 export const SendIcon = (p: IconProps) => (
   <Base {...p}>
     <path d="M22 2 11 13" />
@@ -195,6 +206,13 @@ export const BotIcon = (p: IconProps) => (
     <path d="M20 14h2" />
     <path d="M15 13v2" />
     <path d="M9 13v2" />
+  </Base>
+);
+
+/** Pulse line — the Usage page identity. */
+export const ActivityIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
   </Base>
 );
 
