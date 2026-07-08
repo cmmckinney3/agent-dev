@@ -1,0 +1,375 @@
+/* ---- Agents manager dialog ---- */
+/* Modal over the workspace; reuses the GitHub-dark tokens from App.css. */
+.mgr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 9vh 16px 16px;
+  background: rgba(1, 4, 9, 0.65);
+  animation: mgr-fade 0.15s ease-out;
+}
+
+.mgr {
+  width: 560px;
+  max-width: 100%;
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 48px rgba(1, 4, 9, 0.6);
+  animation: mgr-rise 0.15s ease-out;
+}
+
+.mgr :where(button, input):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+.mgr-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: var(--radius) var(--radius) 0 0;
+  flex: 0 0 auto;
+}
+
+.mgr-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+  user-select: none;
+}
+
+.mgr-title svg {
+  color: var(--blue);
+}
+
+.mgr-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--surface-3);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.mgr-spacer {
+  flex: 1 1 auto;
+}
+
+.mgr-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--green-emphasis-hover);
+  background: var(--green-emphasis);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    opacity 0.15s;
+}
+
+.mgr-add:hover:not(:disabled) {
+  background: var(--green-emphasis-hover);
+}
+
+.mgr-add:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mgr-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.mgr-x:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+.mgr-hint {
+  margin: 0;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+}
+
+.mgr-hint code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text);
+  background: var(--surface-3);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.mgr-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+/* ---- Agent rows ---- */
+.mgr-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--row-accent, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.mgr-row-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--row-accent, var(--text-dim));
+  flex: 0 0 auto;
+}
+
+.mgr-row-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mgr-row-prog {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg);
+  white-space: nowrap;
+}
+
+.mgr-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s,
+    opacity 0.15s;
+}
+
+.mgr-icon-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.mgr-icon-btn.danger:hover:not(:disabled) {
+  color: var(--red);
+}
+
+.mgr-icon-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* ---- Inline editor ---- */
+.mgr-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid var(--blue);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.mgr-editor-row {
+  display: flex;
+  gap: 8px;
+}
+
+.mgr-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mgr-field.grow {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.mgr-field > span {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.mgr-field input {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.mgr-field input.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.mgr-field input:focus {
+  border-color: var(--blue);
+}
+
+.mgr-field input::placeholder {
+  color: var(--text-dim);
+}
+
+.mgr-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.mgr-swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: var(--sw);
+  cursor: pointer;
+  padding: 0;
+  transition: border-color 0.15s;
+}
+
+.mgr-swatch:hover {
+  border-color: var(--text-muted);
+}
+
+.mgr-swatch.on {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--surface-2), 0 0 0 3.5px var(--sw);
+}
+
+.mgr-warn {
+  margin: -3px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #d29922;
+}
+
+.mgr-warn code {
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.mgr-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.mgr-cancel,
+.mgr-save {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    opacity 0.15s;
+}
+
+.mgr-cancel {
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text-muted);
+}
+
+.mgr-cancel:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+.mgr-save {
+  border: 1px solid var(--green-emphasis-hover);
+  background: var(--green-emphasis);
+  color: #fff;
+}
+
+.mgr-save:hover:not(:disabled) {
+  background: var(--green-emphasis-hover);
+}
+
+.mgr-save:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+@keyframes mgr-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes mgr-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
