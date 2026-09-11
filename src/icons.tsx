@@ -230,3 +230,37 @@ export const AlertTriangleIcon = (p: IconProps) => (
     <path d="M12 17h.01" />
   </Base>
 );
+
+/** Sliders — the Settings page identity. */
+export const SettingsIcon = (p: IconProps) => (
+  <Base {...p}>
+    <path d="M4 21v-7" />
+    <path d="M4 10V3" />
+    <path d="M12 21v-9" />
+    <path d="M12 8V3" />
+    <path d="M20 21v-5" />
+    <path d="M20 12V3" />
+    <path d="M1 14h6" />
+    <path d="M9 8h6" />
+    <path d="M17 16h6" />
+  </Base>
+);
+
+/** API credentials (Providers section). */
+export const KeyIcon = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="7.5" cy="15.5" r="4.5" />
+    <path d="m10.7 12.3 8.3-8.3" />
+    <path d="m16.5 6.5 2.5 2.5" />
+    <path d="m19.5 3.5 2.5 2.5" />
+  </Base>
+);
+
+/** Stored workspace data (History & data section). */
+export const DatabaseIcon = (p: IconProps) => (
+  <Base {...p}>
+    <ellipse cx="12" cy="5" rx="8" ry="3" />
+    <path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+    <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
+  </Base>
+);

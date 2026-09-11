@@ -1,7 +1,7 @@
 // Run-history model behind the Usage page. Every agent launch is recorded as
 // a RunRecord — which agent, from where (manual pane start or a task card),
 // when, for how long, and how it ended — persisted with the workspace and
-// capped at MAX_RUN_RECORDS. Aggregation and formatting live here so App.tsx
+// capped by the retention setting. Aggregation and formatting live here so App.tsx
 // stays focused on wiring.
 
 import { TaskMode } from "./tasks";
@@ -11,7 +11,8 @@ export type RunOutcome =
   | "running" // live right now
   | "completed" // process exited on its own (exitCode says how)
   | "stopped" // stopped from the app (Stop button, restart, task moved out)
-  | "interrupted"; // the app closed while it ran — duration unknowable
+  | "interrupted"
+  | "failed";
 
 export interface RunRecord {
   /** Stable id (`run-N`), monotonic like task/agent ids. */
@@ -32,6 +33,13 @@ export interface RunRecord {
   endedAt?: number;
   exitCode?: number;
   outcome: RunOutcome;
+  projectId?: string;
+  cwd?: string;
+  model?: string;
+  program?: string;
+  prompt?: string;
+  error?: string;
+  resumeId?: string;
 }
 
 /**
@@ -47,14 +55,19 @@ export interface RunMeta {
   mode?: TaskMode;
 }
 
-/** History cap — the oldest records fall off past this. */
-export const MAX_RUN_RECORDS = 500;
+/**
+ * Hard ceiling on stored records. The effective limit is `usageLimit` in
+ * Settings (History & data); this is the largest value it can be set to, and
+ * what a persisted blob is trimmed to on load.
+ */
+export const MAX_RUN_RECORDS = 2000;
 
 const OUTCOMES: readonly RunOutcome[] = [
   "running",
   "completed",
   "stopped",
   "interrupted",
+  "failed",
 ];
 
 /**
@@ -95,6 +108,8 @@ export function normalizeRuns(raw: unknown): RunRecord[] {
         endedAt: num(r.endedAt),
         exitCode: num(r.exitCode),
         outcome: stored === "running" ? "interrupted" : stored,
+        projectId: str(r.projectId), cwd: str(r.cwd), model: str(r.model),
+        program: str(r.program), prompt: str(r.prompt), error: str(r.error), resumeId: str(r.resumeId),
       };
     })
     .slice(-MAX_RUN_RECORDS);
@@ -207,7 +222,8 @@ export function aggregateUsage(
     if (r.outcome === "completed") {
       if (r.exitCode === 0) u.ok += 1;
       else if (r.exitCode !== undefined) u.failed += 1;
-    } else if (r.outcome === "stopped") u.stopped += 1;
+    } else if (r.outcome === "failed") u.failed += 1;
+    else if (r.outcome === "stopped") u.stopped += 1;
     else if (r.outcome === "interrupted") u.interrupted += 1;
     const d = runDuration(r, now);
     if (d !== undefined) u.totalMs += d;

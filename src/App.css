@@ -30,8 +30,10 @@
   --focus-ring: 2px solid var(--blue);
   --focus-offset: 1px;
 
-  font-family: "Inter", "Segoe UI", system-ui, Avenir, Helvetica, Arial, sans-serif;
-  --mono: "Cascadia Code", "JetBrains Mono", "Consolas", "Courier New", monospace;
+  font-family:
+    "Inter", "Segoe UI", system-ui, Avenir, Helvetica, Arial, sans-serif;
+  --mono:
+    "Cascadia Code", "JetBrains Mono", "Consolas", "Courier New", monospace;
 
   /* Render native controls (the agent <select>, scrollbars) in dark mode */
   color-scheme: dark;
@@ -242,30 +244,38 @@ body,
   border-color: var(--green-emphasis-hover);
 }
 
+/* Armed by the first click when "confirm Stop all" is on (Settings →
+   Workspace); the next click actually stops every session. */
+.btn.armed {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+
+.btn.armed:hover:not(:disabled) {
+  border-color: var(--red);
+}
+
 .btn :where(svg) {
   flex: 0 0 auto;
 }
 
 :where(
-    .btn,
-    .pane-btn,
-    .pane-select,
-    .cwd-input,
-    .field-btn,
-    .layout-btn,
-    .page-btn,
-    .broadcast-input,
-    .target-chip,
-    .pane-dir,
-    .pane-dir-reset,
-    .pane-search-btn,
-    .pane-search-input,
-    .pane-title,
-    .pane-title-input,
-    .pane-grip,
-    .pane-menu-item,
-    .ws-divider
-  ):focus-visible {
+  .btn,
+  .pane-btn,
+  .cwd-input,
+  .field-btn,
+  .layout-btn,
+  .page-btn,
+  .broadcast-input,
+  .pane-dir,
+  .pane-dir-reset,
+  .pane-search-btn,
+  .pane-search-input,
+  .pane-title-input,
+  .pane-grip,
+  .ws-divider
+):focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
 }
@@ -606,13 +616,21 @@ body:has(.pane.dragging) {
   white-space: nowrap;
   padding: 4px 8px;
   border: 1px solid rgba(88, 166, 255, 0.22);
-  background: color-mix(in srgb, var(--pane-accent, var(--blue)) 14%, var(--bg));
+  background: color-mix(
+    in srgb,
+    var(--pane-accent, var(--blue)) 14%,
+    var(--bg)
+  );
   color: var(--text);
   cursor: text;
 }
 
 .pane-title:hover {
-  border-color: color-mix(in srgb, var(--pane-accent, var(--blue)) 58%, var(--border));
+  border-color: color-mix(
+    in srgb,
+    var(--pane-accent, var(--blue)) 58%,
+    var(--border)
+  );
 }
 
 .pane-title-form {
@@ -679,29 +697,31 @@ body:has(.pane.dragging) {
   white-space: nowrap;
 }
 
-/* Per-pane agent picker (shown while the slot is idle/exited) */
-.pane-select {
-  font-family: inherit;
-  font-size: 13px;
+/* This slot's agent can't launch as configured (switched off, or a provider
+   missing its key/model) — the tooltip carries the reason. */
+.pane-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(210, 153, 34, 0.1);
+  border: 1px solid rgba(210, 153, 34, 0.4);
+  color: #d29922;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--pane-accent, var(--text));
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 3px 7px;
-  cursor: pointer;
-  transition: border-color 0.15s;
+  cursor: help;
 }
 
-.pane-select:hover {
-  border-color: var(--text-muted);
+.pane-warn svg {
+  flex: 0 0 auto;
 }
 
-.pane-select option {
-  color: var(--text);
-  background: var(--surface-2);
+.pane-warn-text {
+  white-space: nowrap;
 }
 
+/* Per-pane agent picker (shown while the slot is idle/exited) */
 /* Per-pane working directory (override the shared default) */
 .pane-dir-group {
   display: inline-flex;
@@ -864,125 +884,6 @@ body:has(.pane.dragging) {
   height: 18px;
   background: var(--border-subtle);
   flex: 0 0 auto;
-}
-
-.pane-window-menu {
-  position: relative;
-  display: inline-flex;
-  flex: 0 0 auto;
-}
-
-.pane-window-trigger {
-  padding-right: 8px;
-}
-
-.pane-window-trigger.open {
-  border-color: rgba(88, 166, 255, 0.45);
-  background: color-mix(in srgb, var(--blue) 13%, var(--surface-3));
-}
-
-.pane-window-popover {
-  position: absolute;
-  top: calc(100% + 7px);
-  right: 0;
-  z-index: 30;
-  display: grid;
-  grid-template-columns: minmax(190px, 1fr);
-  gap: 4px;
-  width: 224px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: color-mix(in srgb, var(--surface-2) 94%, #000);
-  box-shadow: 0 18px 44px rgba(1, 4, 9, 0.6);
-}
-
-.pane-window-popover::before {
-  content: "";
-  position: absolute;
-  top: -5px;
-  right: 18px;
-  width: 9px;
-  height: 9px;
-  border-left: 1px solid var(--border);
-  border-top: 1px solid var(--border);
-  background: inherit;
-  transform: rotate(45deg);
-}
-
-.pane-menu-section {
-  margin: 4px 4px 1px;
-  color: var(--text-dim);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.pane-menu-item {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 650;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background 0.15s,
-    border-color 0.15s,
-    color 0.15s,
-    opacity 0.15s;
-}
-
-.pane-menu-item svg {
-  flex: 0 0 auto;
-  color: var(--text-dim);
-}
-
-.pane-menu-item:hover:not(:disabled) {
-  background: var(--surface-3);
-  border-color: var(--border-subtle);
-  color: var(--text);
-}
-
-.pane-menu-item:hover:not(:disabled) svg {
-  color: var(--blue);
-}
-
-.pane-menu-item:disabled {
-  opacity: 0.38;
-  cursor: not-allowed;
-}
-
-.pane-menu-item.danger {
-  margin-top: 4px;
-  border-top-color: var(--border-subtle);
-}
-
-.pane-menu-item.danger:hover:not(:disabled) {
-  color: var(--red);
-}
-
-.pane-menu-item.danger:hover:not(:disabled) svg {
-  color: var(--red);
-}
-
-.pane-move-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-}
-
-.pane-menu-item.compact {
-  justify-content: flex-start;
 }
 
 /* Terminal area + idle overlay */
@@ -1293,46 +1194,6 @@ body:has(.pane.dragging) {
   100% {
     border-color: var(--border-subtle);
     box-shadow: 0 0 0 6px rgba(163, 113, 247, 0);
-  }
-}
-
-@media (max-width: 1120px) {
-  .topbar {
-    flex-wrap: wrap;
-  }
-
-  .field {
-    flex-basis: 420px;
-  }
-}
-
-/* Collapse the workspace to a single scrollable column on narrow windows:
-   columns flatten away (display: contents) and resizing is suspended. */
-@media (max-width: 720px) {
-  .workspace {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-
-  .ws-col {
-    display: contents;
-  }
-
-  .ws-divider {
-    display: none;
-  }
-
-  .pane {
-    flex: 1 1 auto;
-    min-height: 260px;
-  }
-
-  .board {
-    flex-basis: 264px;
-  }
-
-  .targets {
-    flex-wrap: wrap;
   }
 }
 

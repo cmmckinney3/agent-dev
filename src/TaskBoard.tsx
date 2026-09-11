@@ -1,562 +1,307 @@
-import { useEffect, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { useState } from "react";
+import { AgentConfig } from "./agents";
+import { Task, TASK_COLUMNS, TaskStatus } from "./tasks";
+import { taskBlocker } from "./workspace";
 import {
-  COLUMN_ORDER,
-  Task,
-  TaskDraft,
-  TaskMode,
-  TASK_COLUMNS,
-  TaskStatus,
-} from "./tasks";
-import {
-  AlertTriangleIcon,
-  CheckIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  CloseIcon,
-  CrosshairIcon,
-  FolderIcon,
-  KanbanIcon,
-  PanelLeftIcon,
-  PencilIcon,
-  PlayIcon,
   PlusIcon,
-  RestartIcon,
-  TrashIcon,
+  SearchIcon,
+  KanbanIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  PlayIcon,
+  StopIcon,
+  ChevronUpIcon,
+  PanelLeftIcon,
 } from "./icons";
-import "./TaskBoard.css";
-
-interface AgentOption {
-  id: string;
-  name: string;
-  accent: string;
-}
-
-interface TaskBoardProps {
+interface Props {
   tasks: Task[];
-  /** Agent catalog — drives the composer select and per-card accent. */
-  agents: AgentOption[];
-  /** Shared default cwd, shown as the inherited dir in the composer. */
-  defaultCwd: string;
+  allTasks: Task[];
+  agents: AgentConfig[];
   collapsed: boolean;
-  onToggleCollapsed: () => void;
-  onAdd: (draft: TaskDraft) => void;
-  onUpdate: (id: string, patch: Partial<Task>) => void;
-  onDelete: (id: string) => void;
-  /** Column move (DnD + ◀ ▶). Moving into Running launches the task. */
-  onMove: (id: string, status: TaskStatus) => void;
-  /** Explicit launch / re-launch into a free pane. */
+  onCollapse: () => void;
+  onNew: () => void;
+  onOpen: (id: string) => void;
   onRun: (id: string) => void;
-  onFocusPane: (paneId: string) => void;
-  /** Count of tasks reset Running→Backlog on load; shows a one-time notice. */
-  resetNotice: number;
-  onDismissReset: () => void;
+  onMove: (id: string, status: TaskStatus) => void;
+  onCancelQueue: (id: string) => void;
+  onReorder: (id: string, direction: number) => void;
 }
-
-/** Last path segment, for a compact directory label. */
-function baseName(path: string): string {
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  return parts[parts.length - 1] || path;
-}
-
-export default function TaskBoard({
-  tasks,
-  agents,
-  defaultCwd,
-  collapsed,
-  onToggleCollapsed,
-  onAdd,
-  onUpdate,
-  onDelete,
-  onMove,
-  onRun,
-  onFocusPane,
-  resetNotice,
-  onDismissReset,
-}: TaskBoardProps) {
-  const agentById = (id: string) => agents.find((a) => a.id === id) ?? agents[0];
-
-  // ---- Drag-and-drop ----
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [dragOverCol, setDragOverCol] = useState<TaskStatus | null>(null);
-
-  // ---- Composer ----
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
-  const [mode, setMode] = useState<TaskMode>("interactive");
-  const [dir, setDir] = useState("");
-  const titleRef = useRef<HTMLInputElement | null>(null);
-
-  // Move focus to the title field whenever the composer opens.
-  useEffect(() => {
-    if (composerOpen) titleRef.current?.focus();
-  }, [composerOpen]);
-
-  const resetComposer = () => {
-    setEditingId(null);
-    setTitle("");
-    setPrompt("");
-    setAgentId(agents[0]?.id ?? "");
-    setMode("interactive");
-    setDir("");
-  };
-
-  const openComposer = () => {
-    resetComposer();
-    setComposerOpen(true);
-  };
-
-  const editTask = (t: Task) => {
-    setEditingId(t.id);
-    setTitle(t.title);
-    setPrompt(t.prompt);
-    setAgentId(t.agentId);
-    setMode(t.mode);
-    setDir(t.cwd ?? "");
-    setComposerOpen(true);
-  };
-
-  const closeComposer = () => {
-    setComposerOpen(false);
-    resetComposer();
-  };
-
-  const submit = () => {
-    const trimmed = prompt.trim();
-    if (!trimmed) return; // a task needs a prompt to seed the agent
-    const draft: TaskDraft = {
-      title: title.trim() || "Untitled task",
-      prompt: trimmed,
-      agentId,
-      mode,
-      cwd: dir.trim() || undefined,
-    };
-    if (editingId) onUpdate(editingId, draft);
-    else onAdd(draft);
-    closeComposer();
-  };
-
-  const browseDir = async () => {
-    const picked = await open({
-      directory: true,
-      multiple: false,
-      title: "Working directory for this task",
-    });
-    if (typeof picked === "string") setDir(picked);
-  };
-
-  // ---- Render: collapsed icon strip ----
-  if (collapsed) {
+export default function TaskBoard(p: Props) {
+  const [query, setQuery] = useState("");
+  const [agent, setAgent] = useState("");
+  const [archive, setArchive] = useState(false);
+  const [collapsed, setCollapsed] = useState<string[]>(["done"]);
+  const shown = p.tasks.filter(
+    (t) =>
+      Boolean(t.archived) === archive &&
+      (!agent || t.agentId === agent) &&
+      `${t.title} ${t.prompt}`.toLowerCase().includes(query.toLowerCase()),
+  );
+  if (p.collapsed)
     return (
-      <aside className="board collapsed">
+      <aside className="task-rail collapsed">
         <button
-          className="strip-toggle"
-          onClick={onToggleCollapsed}
-          aria-label="Expand task board"
-          title="Expand task board"
+          className="icon-button"
+          aria-label="Expand tasks"
+          title="Expand tasks"
+          onClick={p.onCollapse}
         >
-          <KanbanIcon width={18} height={18} />
+          <KanbanIcon />
         </button>
-        <div className="strip-counts">
-          {TASK_COLUMNS.map((col) => {
-            const n = tasks.filter((t) => t.status === col.id).length;
-            return (
-              <span
-                key={col.id}
-                className={`strip-count ${col.id}`}
-                title={`${col.label}: ${n}`}
-              >
-                <span className="strip-count-dot" />
-                {n}
-              </span>
-            );
-          })}
-        </div>
-        <button
-          className="strip-new"
-          onClick={() => {
-            onToggleCollapsed();
-            openComposer();
-          }}
-          aria-label="New task"
-          title="New task"
-        >
-          <PlusIcon width={16} height={16} />
+        {TASK_COLUMNS.map((c) => (
+          <span
+            key={c.id}
+            title={`${c.label}: ${p.tasks.filter((t) => t.status === c.id && !t.archived).length}`}
+          >
+            {p.tasks.filter((t) => t.status === c.id && !t.archived).length}
+          </span>
+        ))}
+        <button className="icon-button" aria-label="New task" onClick={p.onNew}>
+          <PlusIcon />
         </button>
       </aside>
     );
-  }
-
-  // ---- Render: expanded board ----
   return (
-    <aside className="board">
-      <header className="board-head">
-        <span className="board-title">
-          <KanbanIcon width={16} height={16} /> Tasks
+    <aside className="task-rail">
+      <header className="rail-head">
+        <span>
+          <KanbanIcon />
+          Tasks <small>{p.tasks.filter((t) => !t.archived).length}</small>
         </span>
-        <span className="board-count">{tasks.length}</span>
-        <span className="board-head-spacer" />
         <button
-          className="board-new"
-          onClick={openComposer}
-          disabled={composerOpen && !editingId}
+          className="icon-button"
+          aria-label="New task"
+          title="New task (Ctrl+Shift+N)"
+          onClick={p.onNew}
         >
-          <PlusIcon width={14} height={14} /> New
+          <PlusIcon />
         </button>
         <button
-          className="board-collapse"
-          onClick={onToggleCollapsed}
-          aria-label="Collapse task board"
-          title="Collapse task board"
+          className="icon-button"
+          aria-label="Collapse tasks"
+          onClick={p.onCollapse}
         >
-          <PanelLeftIcon width={15} height={15} />
+          <PanelLeftIcon />
         </button>
       </header>
-
-      {composerOpen && (
-        <form
-          className="composer"
-          onSubmit={(e) => {
-            e.preventDefault();
-            submit();
-          }}
-        >
-          <div className="composer-head">
-            <span>{editingId ? "Edit task" : "New task"}</span>
-            <button
-              type="button"
-              className="composer-x"
-              onClick={closeComposer}
-              aria-label="Close composer"
-            >
-              <CloseIcon width={14} height={14} />
-            </button>
-          </div>
+      <div className="rail-tools">
+        <label className="search-field">
+          <SearchIcon />
           <input
-            ref={titleRef}
-            className="composer-title"
-            placeholder="Task title"
-            aria-label="Task title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            spellCheck={false}
+            aria-label="Search tasks"
+            placeholder="Search tasks…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
           />
-          <textarea
-            className="composer-prompt"
-            placeholder="Prompt to seed the agent with…"
-            aria-label="Task prompt"
-            value={prompt}
-            rows={3}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              // Cmd/Ctrl+Enter submits from the textarea.
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                e.preventDefault();
-                submit();
-              }
-            }}
-          />
-          <div className="composer-row">
-            <select
-              className="composer-select"
-              aria-label="Agent for this task"
-              value={agentId}
-              onChange={(e) => setAgentId(e.target.value)}
-            >
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-            <div className="composer-mode" role="group" aria-label="Run mode">
-              <button
-                type="button"
-                className={mode === "interactive" ? "on" : ""}
-                aria-pressed={mode === "interactive"}
-                onClick={() => setMode("interactive")}
-                title="Stays running so you can watch and steer"
-              >
-                Interactive
-              </button>
-              <button
-                type="button"
-                className={mode === "headless" ? "on" : ""}
-                aria-pressed={mode === "headless"}
-                onClick={() => setMode("headless")}
-                title="Runs to completion, then auto-advances to Review"
-              >
-                Headless
-              </button>
-            </div>
-          </div>
-          <div className="composer-row">
-            <button
-              type="button"
-              className={`composer-dir ${dir ? "set" : ""}`}
-              onClick={browseDir}
-              title={
-                dir
-                  ? `Runs in ${dir}`
-                  : defaultCwd
-                    ? `Inherits default: ${defaultCwd}`
-                    : "Uses the process default directory"
-              }
-            >
-              <FolderIcon width={13} height={13} />
-              <span className="composer-dir-text">
-                {dir
-                  ? baseName(dir)
-                  : defaultCwd
-                    ? `Inherit · ${baseName(defaultCwd)}`
-                    : "Default dir"}
-              </span>
-            </button>
-            {dir && (
-              <button
-                type="button"
-                className="composer-dir-clear"
-                onClick={() => setDir("")}
-                aria-label="Clear directory override"
-                title="Inherit the default directory"
-              >
-                <CloseIcon width={13} height={13} />
-              </button>
-            )}
-            <span className="composer-row-spacer" />
-            <button
-              type="button"
-              className="composer-cancel"
-              onClick={closeComposer}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="composer-save"
-              disabled={!prompt.trim()}
-            >
-              {editingId ? "Save" : "Add task"}
+        </label>
+        <div className="rail-filters">
+          <select
+            aria-label="Filter tasks by agent"
+            value={agent}
+            onChange={(e) => setAgent(e.target.value)}
+          >
+            <option value="">All agents</option>
+            {p.agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+          <button
+            className={archive ? "chip selected" : "chip"}
+            aria-pressed={archive}
+            onClick={() => setArchive(!archive)}
+          >
+            Archived
+          </button>
+        </div>
+      </div>
+      <div className="task-groups">
+        {p.tasks.length === 0 ? (
+          <div className="rail-empty">
+            <KanbanIcon />
+            <h3>Your next idea starts here</h3>
+            <p>
+              Create a task, choose an agent, and follow the result through
+              review.
+            </p>
+            <button className="btn primary" onClick={p.onNew}>
+              <PlusIcon />
+              Create first task
             </button>
           </div>
-        </form>
-      )}
-
-      <div className="board-cols">
-        {resetNotice > 0 && (
-          <div className="board-notice" role="status">
-            <span>
-              {resetNotice} task{resetNotice > 1 ? "s" : ""} reset to Backlog
-              after restart — agents don't resume automatically.
-            </span>
-            <button
-              type="button"
-              className="board-notice-x"
-              onClick={onDismissReset}
-              aria-label="Dismiss restart notice"
-            >
-              <CloseIcon width={13} height={13} />
-            </button>
-          </div>
-        )}
-        {TASK_COLUMNS.map((col) => {
-          const cards = tasks.filter((t) => t.status === col.id);
-          return (
-            <section
-              key={col.id}
-              className={`board-col ${dragOverCol === col.id ? "drag-over" : ""}`}
-              onDragOver={(e) => {
-                if (!dragId) return;
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-                if (dragOverCol !== col.id) setDragOverCol(col.id);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                const id = e.dataTransfer.getData("text/task-id") || dragId;
-                setDragOverCol(null);
-                setDragId(null);
-                if (id) onMove(id, col.id);
-              }}
-            >
-              <div className="col-head">
-                <span className="col-name">{col.label}</span>
-                <span className="col-count">{cards.length}</span>
-              </div>
-              <div className="col-cards">
-                {cards.length === 0 ? (
-                  <div className="col-empty">
-                    {col.id === "backlog"
-                      ? "No tasks yet"
-                      : col.id === "running"
-                        ? "Drop a card here to launch it"
-                        : "Empty"}
-                  </div>
-                ) : (
-                  cards.map((task) => {
-                    const agent = agentById(task.agentId);
-                    const idx = COLUMN_ORDER.indexOf(task.status);
-                    return (
-                      <article
-                        key={task.id}
-                        className={`task-card ${
-                          dragId === task.id ? "dragging" : ""
-                        } ${task.queued ? "queued" : ""}`}
-                        draggable
-                        onDragStart={(e) => {
-                          e.dataTransfer.setData("text/task-id", task.id);
-                          e.dataTransfer.effectAllowed = "move";
-                          setDragId(task.id);
-                        }}
-                        onDragEnd={() => {
-                          setDragId(null);
-                          setDragOverCol(null);
-                        }}
-                        style={
-                          {
-                            "--card-accent": agent.accent,
-                          } as React.CSSProperties
-                        }
-                      >
-                        <div className="card-top">
-                          <span className="card-agent" title={agent.name}>
-                            <span className="card-agent-dot" />
-                            {agent.name}
-                          </span>
-                          {task.mode === "headless" && (
-                            <span
-                              className="card-mode"
-                              title="Runs headless and auto-advances on completion"
-                            >
-                              headless
-                            </span>
-                          )}
-                          {task.lastExitCode !== undefined && (
-                            <span
-                              className={`card-outcome ${
-                                task.lastExitCode === 0 ? "ok" : "failed"
-                              }`}
-                              title={
-                                task.lastExitCode === 0
-                                  ? "Last run completed cleanly (exit 0)"
-                                  : `Last run failed (exit ${task.lastExitCode})`
-                              }
-                            >
-                              {task.lastExitCode === 0 ? (
-                                <>
-                                  <CheckIcon width={11} height={11} /> ok
-                                </>
-                              ) : (
-                                <>
-                                  <AlertTriangleIcon width={11} height={11} />{" "}
-                                  exit {task.lastExitCode}
-                                </>
+        ) : shown.length === 0 ? (
+          <p className="empty-small">No tasks match these filters.</p>
+        ) : (
+          TASK_COLUMNS.map((column) => {
+            const cards = shown.filter((t) => t.status === column.id);
+            const closed = collapsed.includes(column.id) && !query;
+            return (
+              <section
+                key={column.id}
+                className="task-group"
+                onDragOver={(e) => {
+                  if (
+                    e.dataTransfer.types.includes("application/x-crucible-task")
+                  )
+                    e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  const id = e.dataTransfer.getData(
+                    "application/x-crucible-task",
+                  );
+                  if (id) {
+                    e.preventDefault();
+                    p.onMove(id, column.id);
+                  }
+                }}
+              >
+                <button
+                  className="group-toggle"
+                  aria-expanded={!closed}
+                  onClick={() =>
+                    setCollapsed((prev) =>
+                      closed
+                        ? prev.filter((c) => c !== column.id)
+                        : [...prev, column.id],
+                    )
+                  }
+                >
+                  {closed ? <ChevronRightIcon /> : <ChevronDownIcon />}
+                  <span>{column.label}</span>
+                  <small>{cards.length}</small>
+                </button>
+                {!closed && (
+                  <div className="task-group-cards">
+                    {cards.length === 0 ? (
+                      <div className="task-drop-hint">
+                        {column.id === "running"
+                          ? "Drop a task here to run"
+                          : "No tasks"}
+                      </div>
+                    ) : (
+                      cards.map((task) => {
+                        const a = p.agents.find((a) => a.id === task.agentId);
+                        const blocker = taskBlocker(task, p.allTasks);
+                        return (
+                          <article
+                            className={`task-item ${task.queued ? "queued" : ""}`}
+                            key={task.id}
+                            draggable
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData(
+                                "application/x-crucible-task",
+                                task.id,
+                              );
+                              e.dataTransfer.effectAllowed = "move";
+                            }}
+                          >
+                            <div className="task-item-meta">
+                              <span style={{ color: a?.accent }}>
+                                {a?.name ?? "Agent"}
+                              </span>
+                              {task.priority === "high" && (
+                                <span className="priority-high">High</span>
                               )}
-                            </span>
-                          )}
-                          <span className="card-top-spacer" />
-                          <button
-                            className="card-icon-btn"
-                            title="Edit task"
-                            aria-label={`Edit task: ${task.title}`}
-                            onClick={() => editTask(task)}
-                          >
-                            <PencilIcon width={13} height={13} />
-                          </button>
-                          <button
-                            className="card-icon-btn danger"
-                            title="Delete task"
-                            aria-label={`Delete task: ${task.title}`}
-                            onClick={() => onDelete(task.id)}
-                          >
-                            <TrashIcon width={13} height={13} />
-                          </button>
-                        </div>
-
-                        <h3 className="card-title">{task.title}</h3>
-                        {task.prompt && (
-                          <p className="card-prompt">{task.prompt}</p>
-                        )}
-                        {task.cwd && (
-                          <span className="card-dir" title={task.cwd}>
-                            <FolderIcon width={11} height={11} />
-                            {baseName(task.cwd)}
-                          </span>
-                        )}
-                        {task.queued && (
-                          <p className="card-queued">
-                            Waiting for a free pane…
-                          </p>
-                        )}
-
-                        <div className="card-actions">
-                          <button
-                            className="card-move"
-                            disabled={idx <= 0}
-                            aria-label="Move to previous column"
-                            title="Move to previous column"
-                            onClick={() => onMove(task.id, COLUMN_ORDER[idx - 1])}
-                          >
-                            <ChevronLeftIcon width={14} height={14} />
-                          </button>
-
-                          {task.status === "running" ? (
-                            task.paneId ? (
-                              <button
-                                className="card-primary"
-                                onClick={() => onFocusPane(task.paneId!)}
-                                title="Focus the pane running this task"
-                              >
-                                <CrosshairIcon width={13} height={13} /> Focus
-                              </button>
-                            ) : (
-                              <button
-                                className="card-primary"
-                                onClick={() => onRun(task.id)}
-                                title="Re-launch into a free pane"
-                              >
-                                <RestartIcon width={13} height={13} /> Re-run
-                              </button>
-                            )
-                          ) : task.status === "backlog" ? (
+                              {task.isolation && <span>Worktree</span>}
+                            </div>
                             <button
-                              className="card-primary run"
-                              onClick={() => onRun(task.id)}
-                              title="Launch this task into a free pane"
+                              className="task-title-link"
+                              onClick={() => p.onOpen(task.id)}
                             >
-                              <PlayIcon width={13} height={13} /> Run
+                              {task.title}
                             </button>
-                          ) : (
-                            <button
-                              className="card-primary"
-                              onClick={() => onRun(task.id)}
-                              title="Re-launch into a free pane"
-                            >
-                              <RestartIcon width={13} height={13} /> Re-run
-                            </button>
-                          )}
-
-                          <button
-                            className="card-move"
-                            disabled={idx >= COLUMN_ORDER.length - 1}
-                            aria-label="Move to next column"
-                            title="Move to next column"
-                            onClick={() => onMove(task.id, COLUMN_ORDER[idx + 1])}
-                          >
-                            <ChevronRightIcon width={14} height={14} />
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })
+                            <p className="task-excerpt">{task.prompt}</p>
+                            {(task.attention ||
+                              task.interrupted ||
+                              task.queued ||
+                              blocker) && (
+                              <p className="task-attention">
+                                {task.attention ||
+                                  (task.interrupted
+                                    ? "Interrupted · previous output saved"
+                                    : blocker ||
+                                      "Queued · waiting for a session")}
+                              </p>
+                            )}
+                            <div className="task-item-actions">
+                              <select
+                                aria-label={`Status of ${task.title}`}
+                                value={task.status}
+                                onChange={(e) =>
+                                  p.onMove(
+                                    task.id,
+                                    e.target.value as TaskStatus,
+                                  )
+                                }
+                              >
+                                {TASK_COLUMNS.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.label}
+                                  </option>
+                                ))}
+                              </select>
+                              {task.queued ? (
+                                <>
+                                  <button
+                                    className="icon-button"
+                                    title="Move earlier in queue"
+                                    aria-label={`Move ${task.title} earlier`}
+                                    onClick={() => p.onReorder(task.id, -1)}
+                                  >
+                                    <ChevronUpIcon />
+                                  </button>
+                                  <button
+                                    className="icon-button"
+                                    title="Move later in queue"
+                                    aria-label={`Move ${task.title} later`}
+                                    onClick={() => p.onReorder(task.id, 1)}
+                                  >
+                                    <ChevronDownIcon />
+                                  </button>
+                                  <button
+                                    className="icon-button"
+                                    title="Cancel queue"
+                                    aria-label={`Cancel queue for ${task.title}`}
+                                    onClick={() => p.onCancelQueue(task.id)}
+                                  >
+                                    <StopIcon />
+                                  </button>
+                                </>
+                              ) : task.paneId ? (
+                                <button
+                                  className="text-button"
+                                  onClick={() => p.onOpen(task.id)}
+                                >
+                                  Open
+                                </button>
+                              ) : (
+                                !archive && (
+                                  <button
+                                    className="text-button"
+                                    title={
+                                      blocker
+                                        ? `${blocker}. Queue it to start automatically.`
+                                        : undefined
+                                    }
+                                    onClick={() => p.onRun(task.id)}
+                                  >
+                                    <PlayIcon />
+                                    {blocker ? "Queue" : "Run"}
+                                  </button>
+                                )
+                              )}
+                            </div>
+                          </article>
+                        );
+                      })
+                    )}
+                  </div>
                 )}
-              </div>
-            </section>
-          );
-        })}
+              </section>
+            );
+          })
+        )}
       </div>
     </aside>
   );

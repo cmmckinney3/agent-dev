@@ -25,6 +25,17 @@ export interface Task {
    * (0 = ok badge, anything else = failed). Cleared on the next launch.
    */
   lastExitCode?: number;
+  projectId?: string;
+  priority?: "high" | "normal" | "low";
+  createdAt?: number;
+  archived?: boolean;
+  interrupted?: boolean;
+  attention?: string;
+  dependencies?: string[];
+  isolation?: boolean;
+  worktree?: string;
+  reviewNotes?: string;
+  reviewedAt?: number;
 }
 
 /** The fields a user edits in the composer; the rest are managed by App. */
@@ -34,6 +45,9 @@ export interface TaskDraft {
   agentId: string;
   cwd?: string;
   mode: TaskMode;
+  priority?: Task["priority"];
+  dependencies?: string[];
+  isolation?: boolean;
 }
 
 /** Board columns, left-to-right, with the order used by the ◀ ▶ move buttons. */
@@ -45,3 +59,23 @@ export const TASK_COLUMNS: { id: TaskStatus; label: string }[] = [
 ];
 
 export const COLUMN_ORDER: TaskStatus[] = TASK_COLUMNS.map((c) => c.id);
+
+/**
+ * Pick only the fields the composer owns. A `Task` also carries runtime state
+ * (status, paneId, queued, worktree, review notes) that must never travel
+ * inside a draft or template: spreading a stale snapshot back over the live
+ * task reverts whatever changed while the dialog was open, and a stray `id`
+ * would make a "new" task collide with the one it was drafted from.
+ */
+export function draftFromTask(source: Task | TaskDraft): TaskDraft {
+  return {
+    title: source.title,
+    prompt: source.prompt,
+    agentId: source.agentId,
+    cwd: source.cwd,
+    mode: source.mode,
+    priority: source.priority ?? "normal",
+    dependencies: [...(source.dependencies ?? [])],
+    isolation: source.isolation ?? false,
+  };
+}

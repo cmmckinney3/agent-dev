@@ -373,3 +373,133 @@
     transform: translateY(6px);
   }
 }
+
+/* ---- New-agent template picker ----
+   Styled like the old .mgr-add button, with a transparent <select> laid over
+   it so the native menu positions itself correctly. */
+.mgr-add-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--green-emphasis-hover);
+  background: var(--green-emphasis);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.mgr-add-wrap:hover:has(.mgr-add-select:not(:disabled)) {
+  background: var(--green-emphasis-hover);
+}
+
+.mgr-add-wrap:has(.mgr-add-select:disabled) {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mgr-add-wrap:has(.mgr-add-select:focus-visible) {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+.mgr-add-label {
+  white-space: nowrap;
+}
+
+.mgr-add-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: none;
+  cursor: inherit;
+  font-family: inherit;
+}
+
+/* ---- Row tags: provider routing, off state ---- */
+.mgr-row.off {
+  opacity: 0.55;
+}
+
+.mgr-row-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--violet);
+  color: var(--violet);
+  white-space: nowrap;
+}
+
+.mgr-row-tag.muted {
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
+/* ---- Provider / model selects and the env editor ---- */
+.mgr-field select {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.mgr-field select:focus {
+  border-color: var(--blue);
+}
+
+.mgr-field input:disabled {
+  color: var(--text-dim);
+  background: var(--surface-2);
+  cursor: not-allowed;
+}
+
+.mgr-env {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.mgr-env:focus {
+  border-color: var(--blue);
+}
+
+.mgr-env::placeholder {
+  color: var(--text-dim);
+}
+
+.mgr-note {
+  margin: -3px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.mgr-note code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text);
+}

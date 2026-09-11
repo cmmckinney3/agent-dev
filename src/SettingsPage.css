@@ -1,0 +1,469 @@
+/* Settings page — same GitHub-dark system as the rest of the app: tokens from
+   App.css, uppercase micro-labels, dense type scale, no decorative surfaces. */
+
+.settings-page {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--surface);
+}
+
+.settings-inner {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 22px 24px 48px;
+}
+
+/* ---- Page header ---- */
+.settings-head {
+  margin-bottom: 20px;
+}
+
+.settings-lead {
+  min-width: 0;
+}
+
+.settings-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--text);
+}
+
+.settings-title svg {
+  color: var(--blue);
+}
+
+.settings-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ---- Section ---- */
+.set-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.set-section-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+}
+
+.set-section-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--blue);
+}
+
+.set-section-title {
+  margin: 0 0 3px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.set-section-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.set-rows {
+  padding: 4px 15px 14px;
+}
+
+/* ---- One setting ---- */
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  /* The widest control clusters only just fit at the 900px minimum window;
+     wrapping keeps them reachable instead of pushing them off the edge. */
+  flex-wrap: wrap;
+}
+
+.set-row:last-child {
+  border-bottom: none;
+}
+
+.set-row-lead {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.set-row-label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.set-row-hint {
+  margin: 3px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.set-row-control {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---- Controls ---- */
+.set-input {
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.set-input:focus {
+  border-color: var(--blue);
+}
+
+.set-input::placeholder {
+  color: var(--text-dim);
+}
+
+.set-input.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.set-input.num {
+  width: 84px;
+  text-align: right;
+}
+
+.set-input.wide {
+  width: 290px;
+}
+
+/* Key row: an input plus one or two adjacent buttons. */
+.set-key {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.set-key .set-input {
+  width: 230px;
+}
+
+.set-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.set-btn:hover:not(:disabled) {
+  border-color: var(--text-dim);
+}
+
+.set-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.set-btn.subtle {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.set-btn.subtle:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.set-btn.danger {
+  color: var(--red);
+  border-color: var(--border);
+}
+
+.set-btn.danger:hover:not(:disabled) {
+  border-color: var(--red);
+}
+
+/* Armed: the second click runs the destructive action. */
+.set-btn.danger.armed {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+
+/* ---- Switch ---- */
+.set-toggle {
+  position: relative;
+  width: 38px;
+  height: 21px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-3);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.set-toggle.on {
+  background: var(--green-emphasis);
+  border-color: var(--green-emphasis-hover);
+}
+
+.set-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.set-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition:
+    transform 0.15s,
+    background 0.15s;
+}
+
+.set-toggle.on .set-toggle-knob {
+  background: #fff;
+  transform: translateX(17px);
+}
+
+/* ---- Notes under a row ---- */
+.set-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.set-note svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.set-note code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text);
+}
+
+.set-note.ok {
+  color: var(--green);
+}
+
+.set-note.bad {
+  color: var(--red);
+}
+
+/* ---- Agent roster ---- */
+.set-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px 0 12px;
+}
+
+.set-agent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--agent-accent, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.set-agent.off {
+  opacity: 0.6;
+}
+
+.set-agent-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--agent-accent, var(--text-dim));
+}
+
+.set-agent-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.set-agent-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.set-agent-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.set-agent-prog {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.set-agent-hint,
+.set-agent-warn {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.set-agent-warn {
+  color: #d29922;
+}
+
+.set-agent-warn svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.set-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--violet);
+  color: var(--violet);
+  white-space: nowrap;
+}
+
+.set-tag.live {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.set-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.set-actions-note {
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+/* ---- Restore panel ---- */
+.set-restore {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  margin-bottom: 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.set-restore-label {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.set-restore-text {
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.set-restore-text:focus {
+  border-color: var(--blue);
+}
+
+/* Focus ring parity with the rest of the app. */
+.settings-page :is(button, input, select, textarea):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .set-toggle,
+  .set-toggle-knob,
+  .set-btn,
+  .set-input {
+    transition: none;
+  }
+}

@@ -352,6 +352,13 @@
   line-height: 1.4;
 }
 
+/* A launch that couldn't happen (misconfigured agent) — amber, not blue. */
+.board-notice.warn {
+  border-color: rgba(210, 153, 34, 0.4);
+  background: rgba(210, 153, 34, 0.09);
+  color: #d29922;
+}
+
 .board-notice-x {
   display: inline-flex;
   flex: 0 0 auto;
@@ -550,6 +557,12 @@
 
 .card-icon-btn.danger:hover {
   color: var(--red);
+}
+
+/* Armed by the first click when "confirm before deleting" is on. */
+.card-icon-btn.danger.armed {
+  color: #fff;
+  background: var(--red);
 }
 
 .card-title {

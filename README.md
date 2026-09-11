@@ -26,37 +26,54 @@ Built with **Tauri (Rust) + React + TypeScript + xterm.js**.
   (Backlog → Running → Review → Done). Write a task card, then launch it: the
   card's agent spawns into a free pane **already seeded with the task prompt**.
   See [Task board](#task-board) below.
-- **Working directory** — set a project path in the top bar; panes inherit it
-  unless a pane (or a task) overrides it. Leave it blank to use the app's default.
-- **Start all / Stop all** — launch or kill every agent at once. Each pane also
-  has its own Start/Restart and Stop buttons.
-- **Broadcast bar** — type one prompt and send it to every selected pane at once.
-- **Usage page** — a second page (top-bar switch) with per-agent run history.
-  See [Usage](#usage) below.
+- **Projects** — a named project carries its folder, Git branch, preferred
+  agents, tasks and pane layout. Switch projects from the header; sessions running
+  in another project keep running.
+- **Working directory** — panes inherit the project folder unless a pane (or a
+  task) overrides it.
+- **Focus mode** — expand one pane to the full workspace and come back to the
+  previous layout without losing terminal state.
+- **Start idle / Stop** — starts only panes that aren't already working, so it can
+  never kill a live agent. Restarting a pane stays an explicit, per-pane action.
+- **Broadcast composer** — send one prompt to the selected _running_ panes and see
+  a per-pane delivery result; a failed message keeps its draft.
+- **Task review** — a task opens onto its request, run attempts, saved terminal
+  output and the Git diff captured against a baseline taken at launch, plus review
+  notes. Runs survive a restart; exit code 0 means the process finished, not that
+  the work is correct.
+- **Command palette** — `Ctrl Shift P` for projects, tasks, sessions and actions.
+- **Activity page** — searchable, paginated run history. Run counts and outcomes
+  only; it is not token, cost or quota tracking.
+- **Settings page** — a third page: which agents are available, OpenRouter
+  credentials, terminal appearance, task-board behaviour, and stored data.
+  See [Settings](#settings) below.
 
-## Usage
+## Activity
 
-The **Usage** button next to the brand switches to a page that shows how much
+The **Activity** button next to the brand switches to a page that shows how much
 each agent in the catalog actually gets used. Every launch — a pane's Start
-button, Start all, or a task card — is recorded automatically:
+button, Start idle, or a task card — is recorded automatically:
 
 - **Summary tiles** — runs, total session time, how many agents are live right
   now, and how many catalog agents have been used in the selected range.
 - **Per-agent cards** — one per catalog agent (agents deleted from the catalog
-  keep their history, flagged *removed*): run count, total and average session
+  keep their history, flagged _removed_): run count, total and average session
   time, last active, task vs manual launches, outcome counts
   (`ok` / `failed` / `stopped` / `interrupted`), and each agent's share of
   session time.
-- **Recent runs** — the latest runs with session, origin task, start time,
-  duration (live runs tick up), and outcome. Runs that were live when the app
-  closed come back as *interrupted*, since their durations are unknowable.
+- **Run history** — every retained run with session, origin task, start time,
+  duration (live runs tick up), and outcome, searchable and paginated, each row
+  linking to its saved output and task. Runs that were live when the app closed
+  come back as _interrupted_, since their durations are unknowable.
 - **Time range** — filter everything to the last 24 h / 7 d / 30 d or all time.
 
 "Session time" is wall-clock time an agent's process was running in a pane —
 the app can't see tokens or API cost for arbitrary CLIs. History persists with
 the workspace (last 500 runs, oldest dropped); **Clear history** wipes finished
-records. Switching pages never touches running sessions — the workspace stays
-mounted, so terminals and processes carry on untouched.
+records. There is no token, cost or quota tracking: nothing reports it for an
+arbitrary CLI, and no figure is ever estimated from duration.
+Switching pages never touches running sessions: terminals live outside the React
+tree, so processes carry on untouched.
 
 ## Task board
 
@@ -66,14 +83,14 @@ The board turns Crucible from "parallel terminals" into an agentic workflow:
   run **mode**. The prompt seeds the agent as a launch argument (not typed in), so
   there's no race with the TUI starting up.
 - **Interactive vs headless** —
-  - *Interactive* (default): the agent launches seeded with the prompt and keeps
+  - _Interactive_ (default): the agent launches seeded with the prompt and keeps
     running so you can watch and steer. The card sits in **Running**; you advance
     it to Review/Done by hand.
-  - *Headless*: the agent runs in print/exec mode and exits when done; the card
+  - _Headless_: the agent runs in print/exec mode and exits when done; the card
     then **auto-advances** Running → Review carrying the process **exit code**,
     shown as an `ok` / `exit N` badge so failures are visible at a glance.
 - **Launch & scheduling** — "Run" (or dropping a card on Running) picks the first
-  free pane. If every pane is busy, the card stays in Backlog flagged *queued* and
+  free pane. If every pane is busy, the card stays in Backlog flagged _queued_ and
   starts automatically when a pane frees up (or when you split a new pane open).
 - **Move cards** — drag between columns, or use the ◀ ▶ buttons (keyboard-friendly
   fallback). Each running card can **Focus** its pane; finished cards can **Re-run**.
@@ -88,14 +105,50 @@ cards draw from. Each agent is:
 - **Name** and **program** — the executable on your `PATH` (npm `.cmd` shims
   are resolved automatically on Windows).
 - **Accent color** — used on pane headers, cards, and broadcast chips.
-- **Launch args** per mode — one template for *interactive*, one for
-  *headless*. `{prompt}` marks where the task prompt is inserted; quote an arg
+- **Launch args** per mode — one template for _interactive_, one for
+  _headless_. `{prompt}` marks where the task prompt is inserted; quote an arg
   to keep spaces together (args go straight to the process, no shell, so the
   prompt itself never needs escaping). Defaults: `claude "<prompt>"` /
   `claude -p "<prompt>"`, `codex "<prompt>"` / `codex exec "<prompt>"`.
 
+- **Model access** — either the CLI's own authentication, or **OpenRouter**,
+  which pulls the key, base URL and model from Settings → Providers.
+- **Model** — a per-agent override for the OpenRouter default.
+- **Environment** — `KEY=value` per line, set on the agent's process.
+  `{openrouter_key}`, `{openrouter_base}` and `{openrouter_model}` are
+  substituted at launch, in the env _and_ in the launch args; anything that
+  resolves to nothing is left unset rather than exported blank.
+
+**New agent** offers templates as starting points, including OpenRouter wiring
+for OpenAI-compatible CLIs, Aider and OpenCode. Which environment variables a
+given CLI actually reads is up to that CLI — the templates are a head start, and
+every field stays editable.
+
 The catalog persists with the workspace. Deleting an agent remaps any pane or
-card that referenced it, and the last agent can't be deleted.
+card that referenced it, and the last agent can't be deleted. Switching one
+**off** (Settings → Agents) does the same remap but keeps the configuration and
+its run history.
+
+## Settings
+
+The **Settings** button in the top bar opens a page of options that all change
+real behaviour:
+
+- **Agents** — a switch per catalog entry. Off hides it from pane pickers and
+  the task composer without deleting it. An agent with a live session, and the
+  last one left on, can't be switched off.
+- **Providers — OpenRouter** — master switch, API key (with a live key check),
+  base URL, and a default model (the model list can be fetched from OpenRouter).
+  The key is stored in plain text with the rest of the workspace on this machine.
+- **Terminal** — font size and family, scrollback, cursor style and blink, and
+  copy-on-select. Applied live to panes that are already running.
+- **Task board** — auto-start queued cards, a cap on concurrent task runs, what
+  a finished headless run does (Review / Done on exit 0 / stay put), and whether
+  deleting a card asks first.
+- **Workspace** — whether **Stop all** asks first, and whether a broadcast
+  presses Enter or just types the text into each pane.
+- **History & data** — record runs or not, how many to keep, clear the history,
+  copy the whole workspace as a JSON backup, restore one, or reset everything.
 
 ## Requirements
 
@@ -111,15 +164,42 @@ npm run tauri dev      # dev window with hot reload
 npm run tauri build    # produce a standalone installer
 ```
 
+Checks:
+
+```bash
+npm test               # Node suite: workspace/persistence/session models
+npm run build          # typecheck + production build
+cd src-tauri && cargo test --offline
+```
+
+### Releasing a new installer
+
+Bump `version` to the same value in `src-tauri/tauri.conf.json`,
+`src-tauri/Cargo.toml` and `package.json` before building, or the MSI will not
+upgrade the installed copy — Windows compares only `major.minor.build` and ignores
+a fourth field. The WiX `upgradeCode` is pinned in `tauri.conf.json` and must never
+change; neither may `identifier`, which owns the data directory and the WebView2
+profile holding any pre-native-storage workspace. `npx tauri inspect
+wix-upgrade-code` prints both the derived and the pinned value.
+
 ## How it's wired
 
 - `src-tauri/src/lib.rs` — PTY session manager. Commands: `spawn_agent`,
-  `write_to_agent`, `resize_agent`, `kill_agent`. A reader thread per agent
-  streams PTY bytes to the frontend as base64 `agent-output` events; on EOF the
-  child is reaped and `agent-exit` reports its exit code.
-- `src/AgentPane.tsx` — one xterm.js terminal bound to one agent: renders output,
-  forwards keystrokes, keeps the PTY sized to the pane. `start({ initialArgs })`
-  seeds a launch with the task prompt.
+  `write_to_agent`, `resize_agent`, `kill_agent`, `wait_for_saves`. A reader thread
+  per agent streams PTY bytes to the frontend as base64 `agent-output` events; on
+  EOF the child is reaped and `agent-exit` reports its exit code.
+- `src-tauri/src/desktop.rs` — everything else the desktop owns: atomic workspace
+  storage with a last-known-good backup, the DPAPI-encrypted credential vault,
+  `project_info`, agent installation checks, saved run output, Git baseline/diff
+  capture, Git worktrees, backup import/export and window state.
+- `src/sessions.ts` — the live-session registry. Terminals live here, outside
+  React, so they survive page changes, project switches and remounts.
+- `src/AgentPane.tsx` — the view for one pane: mounts its terminal, renders the
+  header, find bar and overflow menu.
+- `src/storage.ts` / `src/workspace.ts` — the persistence funnel (debounced,
+  serialized, failures always surfaced with a retry) and the `Workspace` model
+  whose `normalizeWorkspace()` validates every untrusted blob before it can
+  replace live state.
 - `src/App.tsx` — the workspace shell: top bar, the pane columns and their
   resize dividers, broadcast bar, task + catalog state, the scheduler, and
   persistence.
@@ -129,7 +209,10 @@ npm run tauri build    # produce a standalone installer
   templates, defaults, persistence normalization) and the manager dialog.
 - `src/TaskBoard.tsx` / `src/tasks.ts` — the board rail (columns, cards, composer,
   drag-and-drop) and the task data model.
-- `src/UsagePage.tsx` / `src/usage.ts` — the Usage page and the run-history
+- `src/settings.ts` / `src/SettingsPage.tsx` — the settings model (defaults and
+  per-field normalization) and the Settings page. App owns the state and wires
+  each field to the behaviour it controls.
+- `src/UsagePage.tsx` / `src/usage.ts` — the Activity page and the run-history
   model behind it (RunRecord log, normalization, per-agent aggregation).
   Recording hooks into App's status funnel: a launch opens a record (task
   launches pass their attribution through `start()`, the same race-avoidance
