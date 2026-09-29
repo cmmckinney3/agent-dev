@@ -18,14 +18,26 @@ export default function Modal({
   useEffect(() => {
     const prior = document.activeElement as HTMLElement | null;
     const panel = ref.current;
-    (panel?.querySelector<HTMLElement>('input:not(:disabled),textarea:not(:disabled)') ?? panel?.querySelector<HTMLElement>('button:not(:disabled)'))?.focus();
+    (
+      panel?.querySelector<HTMLElement>(
+        "input:not(:disabled),textarea:not(:disabled)",
+      ) ?? panel?.querySelector<HTMLElement>("button:not(:disabled)")
+    )?.focus();
+    // Listen on the document, not the panel: an action that removes the focused
+    // control (Clear, Send back…) drops focus to <body>, and a panel listener
+    // would then miss Escape and let Tab walk into the page behind the dialog.
     const key = (e: KeyboardEvent) => {
+      if (!panel) return;
+      // Only the topmost dialog answers (the palette can open over another);
+      // portals mount in order, so that is the last one in the document.
+      const dialogs = document.querySelectorAll('[role="dialog"]');
+      if (dialogs[dialogs.length - 1] !== panel) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
         close.current();
       }
-      if (e.key !== "Tab" || !panel) return;
+      if (e.key !== "Tab") return;
       const els = Array.from(
         panel.querySelectorAll<HTMLElement>(
           'button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href],[tabindex="0"]',
@@ -37,7 +49,10 @@ export default function Modal({
       }
       const first = els[0],
         last = els[els.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
+      if (!panel.contains(document.activeElement)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && document.activeElement === first) {
         e.preventDefault();
         last.focus();
       } else if (!e.shiftKey && document.activeElement === last) {
@@ -45,9 +60,9 @@ export default function Modal({
         first.focus();
       }
     };
-    panel?.addEventListener("keydown", key);
+    document.addEventListener("keydown", key);
     return () => {
-      panel?.removeEventListener("keydown", key);
+      document.removeEventListener("keydown", key);
       prior?.focus();
     };
   }, []);
