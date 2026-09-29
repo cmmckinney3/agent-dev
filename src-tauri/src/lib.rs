@@ -67,21 +67,75 @@ struct SavedEvent {
     error: Option<String>,
 }
 
-/// Resolve a program name to an executable. On Windows, npm-style `.cmd`/`.bat`
-/// shims (e.g. `codex.cmd`) must be launched through `cmd.exe /c`.
+/// Resolve a program name to an executable. On Windows, npm-style `.cmd` shims
+/// (e.g. `codex.cmd`) are launched as the script they wrap; any other `.cmd`/`.bat`
+/// has to go through `cmd.exe /c`.
 fn resolve_command(program: &str) -> (String, Vec<String>) {
     match which::which(program) {
         Ok(path) => {
             let resolved = path.to_string_lossy().to_string();
             let lower = resolved.to_lowercase();
             if lower.ends_with(".cmd") || lower.ends_with(".bat") {
-                ("cmd.exe".to_string(), vec!["/c".to_string(), resolved])
+                npm_shim_command(&path)
+                    .unwrap_or_else(|| ("cmd.exe".to_string(), vec!["/c".to_string(), resolved]))
             } else {
                 (resolved, Vec::new())
             }
         }
         Err(_) => (program.to_string(), Vec::new()),
     }
+}
+
+/// The script an npm cmd-shim forwards `%*` to, relative to the shim's folder:
+/// the last `"%dp0%\…"` (or legacy `"%~dp0\…"`) path on a line ending in `%*`.
+fn npm_shim_target(shim: &str) -> Option<String> {
+    let line = shim.lines().rev().find(|l| l.trim_end().ends_with("%*"))?;
+    let (_, rest) = ["\"%dp0%\\", "\"%~dp0\\"]
+        .iter()
+        .filter_map(|marker| line.rfind(marker).map(|i| (i, &line[i + marker.len()..])))
+        .max_by_key(|(i, _)| *i)?;
+    let target = &rest[..rest.find('"')?];
+    (!target.is_empty() && !target.contains('%')).then(|| target.to_string())
+}
+
+/// Launch an npm cmd-shim's script directly. Routing it through `cmd.exe /c` lets
+/// cmd reparse the prompt: it ignores the `\"` escaping portable-pty uses, so a
+/// quote followed by `&` or `|` runs another command, `%VAR%` expands, and a
+/// newline ends the command. Returns None for anything that isn't such a shim.
+fn npm_shim_command(shim: &std::path::Path) -> Option<(String, Vec<String>)> {
+    let text = std::fs::read_to_string(shim).ok()?;
+    let dir = shim.parent()?;
+    let script = npm_shim_target(&text)?
+        .split(['\\', '/'])
+        .filter(|part| !part.is_empty())
+        .fold(dir.to_path_buf(), |path, part| path.join(part));
+    if !script.is_file() {
+        return None;
+    }
+    let ext = script
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let script_path = script.to_string_lossy().to_string();
+    if matches!(ext.as_str(), "js" | "cjs" | "mjs") || text.to_lowercase().contains("node.exe") {
+        let beside = dir.join("node.exe");
+        let node = if beside.is_file() {
+            beside
+        } else {
+            which::which("node").ok()?
+        };
+        Some((node.to_string_lossy().to_string(), vec![script_path]))
+    } else if matches!(ext.as_str(), "exe" | "com") {
+        Some((script_path, Vec::new()))
+    } else {
+        None
+    }
+}
+
+/// Characters cmd.exe acts on even inside the quotes portable-pty adds, or
+/// outside them when an argument has no whitespace to trigger quoting.
+fn cmd_unsafe(arg: &str) -> bool {
+    arg.contains(['"', '%', '!', '^', '&', '|', '<', '>', '\r', '\n'])
 }
 
 // Windows ConPTY does not deliver EOF until its master is closed. Reap the
@@ -172,6 +226,13 @@ async fn spawn_agent(
             .map_err(|e| e.to_string())?;
 
         let (exe, prefix_args) = resolve_command(&program);
+        if exe == "cmd.exe" && args.iter().any(|a| cmd_unsafe(a)) {
+            return Err(format!(
+                "{program} is a batch script, and Windows cannot pass this prompt to it \
+                 safely. Remove quotes, % ! ^ & | < > and line breaks from the prompt, or \
+                 point the agent at its executable instead."
+            ));
+        }
         let mut cmd = CommandBuilder::new(exe);
         for a in prefix_args {
             cmd.arg(a);
@@ -406,6 +467,84 @@ pub fn run() {
                 };
             }
         });
+}
+
+#[cfg(test)]
+mod shim_tests {
+    use super::*;
+
+    const MODERN: &str = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n) ELSE (\r\n  SET \"_prog=node\"\r\n  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & \"%_prog%\"  \"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js\" %*\r\n";
+    const LEGACY: &str = "@IF EXIST \"%~dp0\\node.exe\" (\r\n  \"%~dp0\\node.exe\"  \"%~dp0\\node_modules\\@anthropic-ai\\claude-code\\cli.js\" %*\r\n) ELSE (\r\n  @SETLOCAL\r\n  @SET PATHEXT=%PATHEXT:;.JS;=;%\r\n  node  \"%~dp0\\node_modules\\@anthropic-ai\\claude-code\\cli.js\" %*\r\n)\r\n";
+
+    #[test]
+    fn npm_shim_target_reads_modern_and_legacy_shims() {
+        assert_eq!(
+            npm_shim_target(MODERN).as_deref(),
+            Some("node_modules\\@openai\\codex\\bin\\codex.js")
+        );
+        assert_eq!(
+            npm_shim_target(LEGACY).as_deref(),
+            Some("node_modules\\@anthropic-ai\\claude-code\\cli.js")
+        );
+        for other in [
+            "@echo off\r\necho hello\r\n",
+            "\"%dp0%\\%OTHER%\\x.js\" %*",
+            "",
+        ] {
+            assert_eq!(npm_shim_target(other), None, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn npm_shims_launch_their_script_without_cmd() {
+        let dir = std::env::temp_dir().join(format!("crucible-shim-{}", std::process::id()));
+        let script_dir = dir
+            .join("node_modules")
+            .join("@openai")
+            .join("codex")
+            .join("bin");
+        std::fs::create_dir_all(&script_dir).unwrap();
+        std::fs::write(script_dir.join("codex.js"), "").unwrap();
+        std::fs::write(dir.join("node.exe"), "").unwrap();
+        std::fs::write(dir.join("codex.cmd"), MODERN).unwrap();
+        let (exe, args) = npm_shim_command(&dir.join("codex.cmd")).unwrap();
+        assert_eq!(exe, dir.join("node.exe").to_string_lossy());
+        assert_eq!(
+            args,
+            vec![script_dir.join("codex.js").to_string_lossy().to_string()]
+        );
+
+        // A shim whose script is missing, or an ordinary batch file, keeps cmd.exe.
+        std::fs::write(dir.join("gone.cmd"), MODERN.replace("codex.js", "gone.js")).unwrap();
+        assert!(npm_shim_command(&dir.join("gone.cmd")).is_none());
+        std::fs::write(dir.join("plain.bat"), "@echo off\r\necho %*\r\n").unwrap();
+        assert!(npm_shim_command(&dir.join("plain.bat")).is_none());
+        std::fs::write(dir.join("tool.py"), "").unwrap();
+        std::fs::write(dir.join("tool.cmd"), "@python \"%~dp0\\tool.py\" %*\r\n").unwrap();
+        assert!(npm_shim_command(&dir.join("tool.cmd")).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn prompts_cmd_would_reinterpret_are_flagged() {
+        for arg in [
+            "say \"hi\" & echo INJECTED",
+            "a&b",
+            "50%PATH%",
+            "line one\nline two",
+            "x | y",
+            "^",
+        ] {
+            assert!(cmd_unsafe(arg), "{arg:?}");
+        }
+        for arg in [
+            "-p",
+            "Fix the login bug in src/auth.ts",
+            "C:\\Work\\app (copy)",
+        ] {
+            assert!(!cmd_unsafe(arg), "{arg:?}");
+        }
+    }
 }
 
 #[cfg(all(test, windows))]
