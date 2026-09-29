@@ -52,8 +52,10 @@ npm run tauri build      # produce a standalone installer
 `src-tauri/src/desktop.rs` is everything else the desktop owns — `load_workspace`,
 `save_workspace`, `project_info`, `check_agent`, `read_run`, `create_worktree`,
 `export_backup`, `import_backup`, `save_window_state`.
-Each spawn opens a `portable-pty` pseudo-terminal, resolves the program (Windows npm
-`.cmd`/`.bat` shims are routed through `cmd.exe /c`), applies the optional `env` map
+Each spawn opens a `portable-pty` pseudo-terminal, resolves the program (a Windows npm
+cmd-shim is launched as `node <script>` directly, since `cmd.exe` would reparse the
+prompt; any other `.cmd`/`.bat` goes through `cmd.exe /c` and refuses a prompt holding
+`"`, `%`, `!`, `^`, `&`, `|`, `<`, `>` or a line break), applies the optional `env` map
 the frontend sends (already token-resolved; empty values are dropped there, so nothing
 is exported blank), and starts a reader thread that streams output to the frontend as
 base64 `agent-output` events. On EOF the child is
@@ -139,7 +141,19 @@ failing the whole load. Portable backups are redacted by default.
   the column order, and `draftFromTask()`. Use that helper for every draft and
   template: a `Task` also carries runtime state (status, paneId, queued, worktree,
   review notes) and spreading a whole task into a draft lets a stale snapshot
-  revert the live record or smuggle its `id` into a new task.
+  revert the live record or smuggle its `id` into a new task. `launchPrompt(task)`
+  is the prompt every launch sends (the request plus any pending `changeRequest`):
+  launch paths must use it, never `task.prompt` directly.
+- `src/review.ts` — pure (no React, no Tauri) model for agent review.
+  `buildReviewPrompt` builds the reviewer prompt, `reviewTaskFor` the linked
+  headless `Review: <title>` task (`reviewOf` points at the reviewed task),
+  `pickReviewer` the default reviewer (an enabled agent other than the builder when
+  one exists) and `reviewsOf` a task's non-archived reviews. **Argv safety rule:**
+  the prompt never embeds diff text or agent output — only fixed text, the user's
+  request/change request, file paths (control characters stripped, length capped),
+  status words and an exit code. Prompts travel as argv (32 KiB on Windows), and a
+  non-npm batch agent still goes through `cmd.exe /c`, which refuses the characters
+  a diff is full of.
 - `src/workspace.ts` — the `Project`/`Workspace`/`PromptTemplate` model plus
   `normalizeWorkspace`, `redactWorkspace`, `retainRuns`, `taskBlocker`,
   `queueCandidates` and `hasDependencyCycle`. Pure, and the most heavily tested
@@ -163,8 +177,11 @@ for the human to advance by hand. `settings.autoStartQueued` gates the drain and
 `settings.maxConcurrentRuns` caps simultaneous task runs below the pane count.
 A task whose `dependencies` aren't all `done` is not refused — it is marked
 `queued` and the drain starts it when they finish (`taskBlocker` /
-`queueCandidates` in `workspace.ts`). The seed prompt is delivered as a CLI arg,
-not typed into the terminal, which avoids racing the CLI's TUI initialization.
+`queueCandidates` in `workspace.ts`). Agent-review tasks (`reviewOf`) are ordinary
+headless tasks that run in the reviewed task's folder with `isolation: false`, so
+they see the builder's files rather than a fresh worktree. The seed prompt is
+delivered as a CLI arg, not typed into the terminal, which avoids racing the CLI's
+TUI initialization.
 
 ## Releasing (Windows MSI)
 

@@ -41,6 +41,9 @@ Built with **Tauri (Rust) + React + TypeScript + xterm.js**.
   output and the Git diff captured against a baseline taken at launch, plus review
   notes. Runs survive a restart; exit code 0 means the process finished, not that
   the work is correct.
+- **Agent review & change requests** — hand a finished task to a second agent for
+  a read-only review, or send **Request changes** feedback that the task's next
+  run receives along with the original request.
 - **Command palette** — `Ctrl Shift P` for projects, tasks, sessions and actions.
 - **Activity page** — searchable, paginated run history. Run counts and outcomes
   only; it is not token, cost or quota tracking.
@@ -94,6 +97,16 @@ The board turns Crucible from "parallel terminals" into an agentic workflow:
   starts automatically when a pane frees up (or when you split a new pane open).
 - **Move cards** — drag between columns, or use the ◀ ▶ buttons (keyboard-friendly
   fallback). Each running card can **Focus** its pane; finished cards can **Re-run**.
+- **Request changes** — in a task's detail, write what needs to change and send it
+  back (optionally re-running it at once). The feedback is stored on the task and
+  sent after the original request on every launch until the task is marked
+  reviewed & done or the request is cleared. The run's history record keeps the
+  exact prompt that was sent.
+- **Agent review** — **Ask for review** in task detail creates a linked headless
+  `Review: <title>` task in the same folder, run by the agent you pick (a
+  different one from the builder by default). It reports findings without editing
+  files. The reviewer prompt names the request, the changed files and the exit
+  code, but never embeds the diff or the agent's output.
 - **Persistence** — tasks survive restarts. Live process state does not, so any
   card that was Running comes back in Backlog (a one-time notice explains this).
 
@@ -143,8 +156,9 @@ real behaviour:
 - **Terminal** — font size and family, scrollback, cursor style and blink, and
   copy-on-select. Applied live to panes that are already running.
 - **Task board** — auto-start queued cards, a cap on concurrent task runs, what
-  a finished headless run does (Review / Done on exit 0 / stay put), and whether
-  deleting a card asks first.
+  a finished headless run does (Review / Done on exit 0 / stay put), whether
+  deleting a card asks first, and the review instructions appended to every
+  agent-review prompt (blank uses the built-in checklist).
 - **Workspace** — whether **Stop all** asks first, and whether a broadcast
   presses Enter or just types the text into each pane.
 - **History & data** — record runs or not, how many to keep, clear the history,
@@ -209,6 +223,9 @@ wix-upgrade-code` prints both the derived and the pinned value.
   templates, defaults, persistence normalization) and the manager dialog.
 - `src/TaskBoard.tsx` / `src/tasks.ts` — the board rail (columns, cards, composer,
   drag-and-drop) and the task data model.
+- `src/review.ts` — the pure reviewer-prompt/review-task model: builds the prompt
+  an agent reviewer gets, the linked `Review: <title>` task, the default reviewer
+  choice and a task's list of reviews.
 - `src/settings.ts` / `src/SettingsPage.tsx` — the settings model (defaults and
   per-field normalization) and the Settings page. App owns the state and wires
   each field to the behaviour it controls.
@@ -220,5 +237,6 @@ wix-upgrade-code` prints both the derived and the pinned value.
 
 ## Roadmap ideas
 
-- Real orchestration: roles (builder/reviewer), a coordinator that creates and
-  assigns cards, and a mailbox/shared feed between agents.
+- Real orchestration, still open: a coordinator that creates and assigns cards,
+  and a mailbox/shared feed between agents. The builder/reviewer handoff now
+  exists as [Agent review](#task-board).

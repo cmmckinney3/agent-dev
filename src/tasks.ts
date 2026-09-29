@@ -36,6 +36,13 @@ export interface Task {
   worktree?: string;
   reviewNotes?: string;
   reviewedAt?: number;
+  /**
+   * Feedback from "Request changes"; appended to every launch prompt until the
+   * task is marked done or the request is cleared.
+   */
+  changeRequest?: string;
+  /** On an agent-review task: the id of the task whose work it reviews. */
+  reviewOf?: string;
 }
 
 /** The fields a user edits in the composer; the rest are managed by App. */
@@ -59,6 +66,21 @@ export const TASK_COLUMNS: { id: TaskStatus; label: string }[] = [
 ];
 
 export const COLUMN_ORDER: TaskStatus[] = TASK_COLUMNS.map((c) => c.id);
+
+export const CHANGE_REQUEST_HEADING = "Changes requested after review:";
+
+/**
+ * The prompt a launch actually sends: the original request plus any pending
+ * change request. Every launch path must use this, never `task.prompt`
+ * directly, or review feedback silently stops reaching the agent.
+ */
+export function launchPrompt(
+  task: Pick<Task, "prompt" | "changeRequest">,
+): string {
+  const feedback = task.changeRequest?.trim();
+  if (!feedback) return task.prompt;
+  return `${task.prompt.trimEnd()}\n\n${CHANGE_REQUEST_HEADING}\n${feedback}`;
+}
 
 /**
  * Pick only the fields the composer owns. A `Task` also carries runtime state

@@ -1,6 +1,6 @@
 # Implementation plan — Review loop (agent reviewers + change requests)
 
-Status: in progress · Planned 2026-09-29 · Frontend only, no Rust changes
+Status: implemented 2026-09-29 (see `docs/development-checkpoint.md`) · The feature itself is frontend only
 
 ## 1. Why this feature
 
@@ -62,8 +62,9 @@ Prompts are passed as argv. On Windows, npm `.cmd` shims are launched through
 therefore must **never embed diff text or agent output**. It may contain only
 fixed text, the user's own request and change request, file paths (Windows paths
 cannot contain `"`), status words, and an exit code. Strip control characters from
-paths and truncate each one. The pre-existing argv quoting issue is tracked
-separately and is out of scope here.
+paths and truncate each one. (The same pass also stopped routing npm shims
+through `cmd.exe`; this rule stays, because other batch agents and the 32 KiB
+argv limit still apply.)
 
 ## 3. Data model (pure modules)
 
@@ -103,28 +104,38 @@ that with a test.
 ### `src/review.ts` (new, pure; no React, no Tauri)
 
 ```ts
-export interface ReviewFile { path: string; status: string }
+export interface ReviewFile {
+  path: string;
+  status: string;
+}
 export const REVIEW_FILE_LIMIT = 40;
 export const REVIEW_PATH_LIMIT = 200;
 export interface ReviewContext {
-  task: Task;             // the task under review
+  task: Task; // the task under review
   builderName: string;
-  run?: RunRecord;        // its latest finished run, if any
-  files?: ReviewFile[];   // undefined = no capture available
-  instructions: string;   // settings.reviewInstructions
+  run?: RunRecord; // its latest finished run, if any
+  files?: ReviewFile[]; // undefined = no capture available
+  instructions: string; // settings.reviewInstructions
 }
 export function buildReviewPrompt(ctx: ReviewContext): string;
-export function reviewTaskFor(task: Task, run: RunRecord | undefined,
-  reviewerAgentId: string, prompt: string,
-  ids: { id: string; now: number }): Task;
-export function pickReviewer(agents: AgentConfig[], builderAgentId: string): string | undefined;
+export function reviewTaskFor(
+  task: Task,
+  run: RunRecord | undefined,
+  reviewerAgentId: string,
+  prompt: string,
+  ids: { id: string; now: number },
+): Task;
+export function pickReviewer(
+  agents: AgentConfig[],
+  builderAgentId: string,
+): string | undefined;
 export function reviewsOf(tasks: Task[], taskId: string): Task[];
 ```
 
 `buildReviewPrompt` sections, in order:
 
-1. `Review the work another coding agent (<builderName>) did for the task below.
-   Do not modify, create or delete files and do not commit — report findings only.`
+1. `Review the work another coding agent (<builderName>) did for the task below.`
+   followed by an instruction not to modify, create or delete files, or commit.
 2. `Task: <title>`
 3. `Original request:` then `run?.prompt || launchPrompt(task)`
 4. `Where to look:` — if `task.worktree` is set, an isolated-worktree line
@@ -191,8 +202,8 @@ then the first enabled agent, then `undefined`.
   action, and calls `startTask(review.id)`. Guard `invoke` with `isTauri()` like
   the rest of App.
 - New `onRequestChanges(feedback, rerun)` handler, passed to TaskDetail. It patches
-  `{ changeRequest: feedback.trim() || undefined, attention: "Changes requested",
-  status: "backlog", reviewedAt: undefined, interrupted: false }` and then
+  `changeRequest` (trimmed, or undefined when blank), `attention: "Changes requested"`,
+  `status: "backlog"`, `reviewedAt: undefined` and `interrupted: false`, and then
   optionally calls `startTask`.
 - TaskDetail gets new props: `agents` (enabled), `reviews`, `reviewedTask`,
   `onRequestReview`, `onRequestChanges`, `onOpenTask` (uses `showTask`).
@@ -213,12 +224,12 @@ then the first enabled agent, then `undefined`.
 
 ## 6. Work breakdown (delegated)
 
-| Step | Owner | Files | Depends on |
-|---|---|---|---|
-| A. Model + tests | Sonnet agent | `src/tasks.ts`, `src/settings.ts`, `src/review.ts` (new), `src/workspace.ts`, `tests/review.test.mjs` (new) | — |
-| B. UI + wiring | Sonnet agent | `src/App.tsx`, `src/TaskDetail.tsx`, `src/TaskBoard.tsx`, `src/SettingsPage.tsx`, `src/Premium.css` | A |
-| C. Docs | Sonnet agent | `README.md`, `CLAUDE.md`, `AGENTS.md`, `docs/development-checkpoint.md` | A (parallel with B) |
-| D. Verify + ship | Lead | review diff, `npm test`, `npm run build`, browser smoke check, Prettier, commit, push | B, C |
+| Step             | Owner        | Files                                                                                                       | Depends on          |
+| ---------------- | ------------ | ----------------------------------------------------------------------------------------------------------- | ------------------- |
+| A. Model + tests | Sonnet agent | `src/tasks.ts`, `src/settings.ts`, `src/review.ts` (new), `src/workspace.ts`, `tests/review.test.mjs` (new) | —                   |
+| B. UI + wiring   | Sonnet agent | `src/App.tsx`, `src/TaskDetail.tsx`, `src/TaskBoard.tsx`, `src/SettingsPage.tsx`, `src/Premium.css`         | A                   |
+| C. Docs          | Sonnet agent | `README.md`, `CLAUDE.md`, `AGENTS.md`, `docs/development-checkpoint.md`                                     | A (parallel with B) |
+| D. Verify + ship | Lead         | review diff, `npm test`, `npm run build`, browser smoke check, Prettier, commit, push                       | B, C                |
 
 ## 7. Acceptance
 

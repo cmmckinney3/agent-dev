@@ -248,10 +248,21 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
         reviewedAt: typeof t.reviewedAt === "number" ? t.reviewedAt : undefined,
         lastExitCode:
           typeof t.lastExitCode === "number" ? t.lastExitCode : undefined,
+        changeRequest:
+          typeof t.changeRequest === "string" && t.changeRequest.trim()
+            ? t.changeRequest
+            : undefined,
+        reviewOf: typeof t.reviewOf === "string" ? t.reviewOf : undefined,
       };
     });
-  for (const t of tasks)
+  for (const t of tasks) {
     t.dependencies = t.dependencies?.filter((id) => taskIds.has(id));
+    if (
+      t.reviewOf !== undefined &&
+      (t.reviewOf === t.id || !taskIds.has(t.reviewOf))
+    )
+      t.reviewOf = undefined;
+  }
   return {
     version: 7,
     projects,

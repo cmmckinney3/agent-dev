@@ -9,7 +9,7 @@ import TaskComposer from "./TaskComposer";
 import TaskDetail from "./TaskDetail";
 import Modal from "./Modal";
 import CommandPalette, { PaletteAction } from "./CommandPalette";
-import RunReview from "./RunReview";
+import RunReview, { ReviewData } from "./RunReview";
 import SplitDivider from "./SplitDivider";
 import {
   AgentDraft,
@@ -35,7 +35,19 @@ import {
   withColumnSizes,
   withPaneSizes,
 } from "./layout";
-import { Task, TaskDraft, TaskStatus, draftFromTask } from "./tasks";
+import {
+  Task,
+  TaskDraft,
+  TaskStatus,
+  draftFromTask,
+  launchPrompt,
+} from "./tasks";
+import {
+  buildReviewPrompt,
+  ReviewFile,
+  reviewsOf,
+  reviewTaskFor,
+} from "./review";
 import { RunRecord } from "./usage";
 import {
   AgentStatus,
@@ -157,6 +169,7 @@ export default function App({
   const operationEpoch = useRef(0);
   const cancelled = useRef(new Set<string>());
   const queueRunning = useRef(false);
+  const reviewing = useRef(new Set<string>());
   const [queueTick, setQueueTick] = useState(0);
   const project = w.projects.find((p) => p.id === w.activeProjectId)!;
   const order = paneIds(project.layout);
@@ -343,6 +356,8 @@ export default function App({
                 paneId: undefined,
                 queued: false,
                 lastExitCode: event.exitCode,
+                // Reaching Done closes the review loop; a later re-run starts clean.
+                changeRequest: status === "done" ? undefined : t.changeRequest,
                 attention:
                   event.status === "failed"
                     ? (event.error ?? "Failed to start")
@@ -441,7 +456,7 @@ export default function App({
       cwd,
       taskId: task?.id,
       taskTitle: task?.title,
-      prompt: task?.prompt,
+      prompt: task ? launchPrompt(task) : undefined,
       mode: task?.mode,
       startedAt: Date.now(),
       outcome: "running",
@@ -583,7 +598,7 @@ export default function App({
         {
           program: a.program,
           cwd,
-          args: seedArgs(a, task.prompt, task.mode, state.settings),
+          args: seedArgs(a, launchPrompt(task), task.mode, state.settings),
           env: launchEnv(a, state.settings),
           run,
         },
@@ -662,6 +677,7 @@ export default function App({
       queued: false,
       attention: undefined,
       interrupted: false,
+      ...(status === "done" && { changeRequest: undefined }),
     });
   };
   const saveTask = (draft: TaskDraft, run: boolean) => {
@@ -739,12 +755,84 @@ export default function App({
           lastExitCode: undefined,
           reviewNotes: "",
           reviewedAt: undefined,
+          changeRequest: undefined,
+          reviewOf: undefined,
           createdAt: Date.now(),
         },
       ],
     }));
     setDetail(undefined);
     setComposer({ id, key: id });
+  };
+  const requestReview = async (taskId: string, reviewerId: string) => {
+    const before = latest.current;
+    const task = before.tasks.find((t) => t.id === taskId);
+    if (
+      !task ||
+      task.paneId ||
+      task.status === "running" ||
+      reviewing.current.has(taskId)
+    )
+      return;
+    const reviewer = before.agents.find((a) => a.id === reviewerId);
+    if (!reviewer || !reviewer.enabled) {
+      notify("Choose an available reviewer agent.");
+      return;
+    }
+    reviewing.current.add(taskId);
+    try {
+      // The builder's latest finished run: it is what the reviewer is looking at.
+      const finished = before.usage.filter(
+        (r) => r.taskId === taskId && r.outcome !== "running",
+      );
+      const run: RunRecord | undefined = finished[finished.length - 1];
+      // The changed-file list comes from the run's saved snapshot. Losing it is
+      // not fatal: the prompt then tells the reviewer to inspect the tree itself.
+      let files: ReviewFile[] | undefined;
+      if (run && isTauri()) {
+        try {
+          const data = await invoke<ReviewData>("read_run", {
+            runId: run.id,
+            refresh: false,
+          });
+          if (data.review.git)
+            files = data.review.files.map(({ path, status }) => ({
+              path,
+              status,
+            }));
+        } catch {
+          // Non-fatal: `files` stays undefined.
+        }
+      }
+      // State may have moved on while the snapshot was being read.
+      const state = latest.current;
+      const current = state.tasks.find((t) => t.id === taskId);
+      if (!current || current.paneId || current.status === "running") return;
+      const builderName =
+        state.agents.find((a) => a.id === current.agentId)?.name ??
+        run?.agentName ??
+        "another agent";
+      const prompt = buildReviewPrompt({
+        task: current,
+        builderName,
+        run,
+        files,
+        instructions: state.settings.reviewInstructions,
+      });
+      const review = reviewTaskFor(current, run, reviewer.id, prompt, {
+        id: newId("task"),
+        now: Date.now(),
+      });
+      change((v) => ({ ...v, tasks: [...v.tasks, review] }));
+      notify(
+        `Review task created for “${current.title}”.`,
+        () => showTask(review.id),
+        "Open review",
+      );
+      void startTask(review.id);
+    } finally {
+      reviewing.current.delete(taskId);
+    }
   };
   const reorderTask = (id: string, direction: number) =>
     change((v) => {
@@ -1912,14 +2000,36 @@ export default function App({
             setComposer({ id: selectedTask.id, key: newId("edit") })
           }
           onRun={() => void startTask(selectedTask.id)}
+          agents={available}
+          reviews={reviewsOf(w.tasks, selectedTask.id)}
+          reviewedTask={
+            selectedTask.reviewOf
+              ? w.tasks.find((t) => t.id === selectedTask.reviewOf)
+              : undefined
+          }
           onReview={() =>
             patchTask(selectedTask.id, {
               status: "done",
               attention: undefined,
               reviewedAt: Date.now(),
               interrupted: false,
+              changeRequest: undefined,
             })
           }
+          onRequestReview={(agentId) =>
+            void requestReview(selectedTask.id, agentId)
+          }
+          onRequestChanges={(feedback, rerun) => {
+            patchTask(selectedTask.id, {
+              changeRequest: feedback.trim() || undefined,
+              attention: "Changes requested",
+              status: "backlog",
+              reviewedAt: undefined,
+              interrupted: false,
+            });
+            if (rerun) void startTask(selectedTask.id);
+          }}
+          onOpenTask={showTask}
           onArchive={() => archiveTask(selectedTask)}
           onDuplicate={() => duplicateTask(selectedTask)}
           onFocus={() =>

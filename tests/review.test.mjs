@@ -1,0 +1,501 @@
+import { test, after } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import ts from "typescript";
+
+// Exercise the actual pure TypeScript models without adding a browser test runtime.
+const temp = mkdtempSync(join(tmpdir(), "crucible-review-tests-"));
+for (const name of [
+  "workspace",
+  "layout",
+  "agents",
+  "settings",
+  "tasks",
+  "usage",
+  "review",
+]) {
+  const source = readFileSync(
+    new URL(`../src/${name}.ts`, import.meta.url),
+    "utf8",
+  );
+  const { outputText } = ts.transpileModule(source, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.ES2022,
+    },
+  });
+  writeFileSync(
+    join(temp, `${name}.mjs`),
+    outputText.replace(/from "\.\/([^"]+)"/g, 'from "./$1.mjs"'),
+  );
+}
+const { normalizeWorkspace } = await import(
+  pathToFileURL(join(temp, "workspace.mjs"))
+);
+const { launchPrompt, draftFromTask, CHANGE_REQUEST_HEADING } = await import(
+  pathToFileURL(join(temp, "tasks.mjs"))
+);
+const {
+  DEFAULT_SETTINGS,
+  DEFAULT_REVIEW_INSTRUCTIONS,
+  REVIEW_INSTRUCTIONS_MAX,
+  normalizeSettings,
+} = await import(pathToFileURL(join(temp, "settings.mjs")));
+const {
+  buildReviewPrompt,
+  reviewTaskFor,
+  pickReviewer,
+  reviewsOf,
+  REVIEW_FILE_LIMIT,
+  REVIEW_PATH_LIMIT,
+} = await import(pathToFileURL(join(temp, "review.mjs")));
+after(() => {
+  if (
+    resolve(temp).startsWith(resolve(tmpdir()) + "\\") ||
+    resolve(temp).startsWith(resolve(tmpdir()) + "/")
+  )
+    rmSync(temp, { recursive: true });
+});
+const task = (id, patch = {}) => ({
+  id,
+  title: id,
+  prompt: "Do work",
+  agentId: "codex",
+  mode: "headless",
+  status: "backlog",
+  ...patch,
+});
+const run = (patch = {}) => ({
+  id: "run-1",
+  agentId: "codex",
+  agentName: "Codex",
+  slotId: "s",
+  session: "S",
+  startedAt: 1,
+  outcome: "completed",
+  ...patch,
+});
+const review = (patch = {}) =>
+  buildReviewPrompt({
+    task: task("t1", { title: "Add login" }),
+    builderName: "Codex",
+    instructions: "",
+    ...patch,
+  });
+const file = (path, status = "modified") => ({ path, status });
+
+test("launchPrompt sends the prompt unchanged unless feedback is pending", () => {
+  assert.equal(launchPrompt({ prompt: "Do work" }), "Do work");
+  for (const changeRequest of ["", "  \n\t "])
+    assert.equal(
+      launchPrompt({ prompt: "Do work\n", changeRequest }),
+      "Do work\n",
+    );
+  assert.equal(
+    launchPrompt({
+      prompt: "Do work\n\n",
+      changeRequest: "  Handle empty input\n",
+    }),
+    `Do work\n\n${CHANGE_REQUEST_HEADING}\nHandle empty input`,
+  );
+  assert.equal(CHANGE_REQUEST_HEADING, "Changes requested after review:");
+});
+test("drafts ignore review fields, so a template cannot revive feedback or a review link", () => {
+  const draft = draftFromTask(
+    task("t1", { changeRequest: "Fix it", reviewOf: "t0" }),
+  );
+  assert.equal("changeRequest" in draft, false);
+  assert.equal("reviewOf" in draft, false);
+});
+test("review prompt names the builder, the task and the request in order", () => {
+  const p = review();
+  assert.equal(
+    p.split("\n\n")[0],
+    "Review the work another coding agent (Codex) did for the task below. Do not modify, create or delete files and do not commit — report findings only.",
+  );
+  const order = [
+    "Task: Add login",
+    "Original request:\nDo work",
+    "Where to look:",
+    "No file list was captured",
+    "Review instructions:",
+  ].map((s) => p.indexOf(s));
+  assert.ok(order.every((i) => i >= 0));
+  assert.deepEqual(
+    [...order].sort((a, b) => a - b),
+    order,
+  );
+  assert.ok(p.split("\n\n").includes("Task: Add login"));
+});
+test("review prompt shows what was actually sent to the builder", () => {
+  const t = task("t1", {
+    prompt: "Do work",
+    changeRequest: "Cover the error path",
+  });
+  assert.match(
+    review({ task: t, run: run({ prompt: "Sent prompt" }) }),
+    /Original request:\nSent prompt\n\n/,
+  );
+  assert.doesNotMatch(
+    review({ task: t, run: run({ prompt: "Sent prompt" }) }),
+    /Cover the error path/,
+  );
+  for (const r of [undefined, run(), run({ prompt: "" })])
+    assert.match(
+      review({ task: t, run: r }),
+      new RegExp(
+        `Original request:\\nDo work\\n\\n${CHANGE_REQUEST_HEADING}\\nCover the error path\\n\\n`,
+      ),
+    );
+});
+test("review prompt points at the worktree or warns about the shared folder", () => {
+  const isolated = review({ task: task("t1", { worktree: "C:\\wt" }) });
+  assert.match(isolated, /isolated Git worktree/);
+  assert.match(isolated, /git diff HEAD/);
+  assert.match(isolated, /untracked/);
+  const shared = review();
+  assert.match(shared, /shared project folder/);
+  assert.match(shared, /git diff\./);
+  assert.match(shared, /already there/);
+  assert.doesNotMatch(shared, /git diff HEAD/);
+  assert.doesNotMatch(isolated, /already there/);
+});
+test("review prompt handles a missing, empty and populated file list", () => {
+  assert.match(
+    review({ files: undefined }),
+    /No file list was captured for this run; inspect the working tree directly\./,
+  );
+  const empty = review({ files: [] });
+  assert.match(
+    empty,
+    /The run's snapshot recorded no text-file changes; check whether the request was carried out\./,
+  );
+  assert.doesNotMatch(empty, /Files changed/);
+  const some = review({
+    files: [
+      file("src/a.ts", "added"),
+      file("src/b.ts"),
+      file("src/c.ts", "deleted"),
+    ],
+  });
+  assert.match(
+    some,
+    /Files changed during the run \(3\):\n- added: src\/a\.ts\n- modified: src\/b\.ts\n- deleted: src\/c\.ts\n\n/,
+  );
+  assert.doesNotMatch(some, /No file list/);
+});
+test("review prompt caps a long file list and counts the rest", () => {
+  const files = Array.from({ length: REVIEW_FILE_LIMIT + 5 }, (_, i) =>
+    file(`f${i}.ts`),
+  );
+  const p = review({ files });
+  assert.match(
+    p,
+    new RegExp(`Files changed during the run \\(${REVIEW_FILE_LIMIT + 5}\\):`),
+  );
+  assert.equal(
+    p.split("\n").filter((l) => l.startsWith("- modified: ")).length,
+    REVIEW_FILE_LIMIT,
+  );
+  assert.ok(
+    p.includes(`- modified: f${REVIEW_FILE_LIMIT - 1}.ts\n- …and 5 more\n`),
+  );
+  assert.ok(!p.includes(`f${REVIEW_FILE_LIMIT}.ts`));
+  assert.ok(
+    !review({ files: files.slice(0, REVIEW_FILE_LIMIT) }).includes("…and"),
+  );
+});
+test("review prompt reports an unknown status as changed", () => {
+  const p = review({ files: [file("a.ts", "renamed"), file("b.ts", "")] });
+  assert.match(p, /- changed: a\.ts\n- changed: b\.ts\n/);
+});
+test("review prompt strips control characters and truncates long paths", () => {
+  const p = review({
+    files: [
+      file("src/a\nb\u001b[31mc\u0000.ts"),
+      file("x".repeat(REVIEW_PATH_LIMIT * 3)),
+    ],
+  });
+  assert.ok(p.includes("- modified: src/ab[31mc.ts\n"));
+  assert.doesNotMatch(p, /[\u0000-\u0009\u000b-\u001f\u007f]/);
+  const long = p.split("\n").find((l) => l.startsWith("- modified: x"));
+  assert.equal(long, `- modified: ${"x".repeat(REVIEW_PATH_LIMIT - 1)}…`);
+  assert.ok(
+    review({ files: [file("y".repeat(REVIEW_PATH_LIMIT))] }).includes(
+      `- modified: ${"y".repeat(REVIEW_PATH_LIMIT)}\n`,
+    ),
+  );
+});
+test("review prompt never leaks diff text from file entries", () => {
+  const p = review({
+    files: [{ path: "a.ts", status: "modified", diff: "SECRET-DIFF-TEXT" }],
+  });
+  assert.ok(p.includes("- modified: a.ts"));
+  assert.ok(!p.includes("SECRET-DIFF-TEXT"));
+  // Not even read: only path and status may be touched.
+  const guarded = {
+    path: "b.ts",
+    status: "added",
+    get diff() {
+      throw new Error("diff was read");
+    },
+    get output() {
+      throw new Error("output was read");
+    },
+  };
+  assert.ok(review({ files: [guarded] }).includes("- added: b.ts"));
+});
+test("review prompt carries no double quote of its own, since prompts travel as argv", () => {
+  const p = review({
+    run: run({ exitCode: 1 }),
+    files: [file("a.ts")],
+    task: task("t1", { worktree: "C:\\wt" }),
+  });
+  assert.ok(!p.includes('"'));
+  assert.ok(!DEFAULT_REVIEW_INSTRUCTIONS.includes('"'));
+});
+test("review prompt reports the exit code, the outcome, or neither", () => {
+  assert.match(
+    review({ run: run({ exitCode: 0 }) }),
+    /\n\nThe builder's process exited with code 0\.\n\n/,
+  );
+  assert.match(review({ run: run({ exitCode: 2 }) }), /exited with code 2\./);
+  const stopped = review({ run: run({ outcome: "stopped" }) });
+  assert.match(stopped, /\n\nThe builder's run ended as: stopped\.\n\n/);
+  assert.doesNotMatch(stopped, /exited with code/);
+  const none = review();
+  assert.doesNotMatch(none, /The builder's (process|run)/);
+  assert.ok(
+    none.indexOf("Review instructions:") > none.indexOf("No file list"),
+  );
+});
+test("review instructions fall back to the checklist when blank and are otherwise used verbatim", () => {
+  for (const instructions of ["", "  \n\t "])
+    assert.ok(
+      review({ instructions }).endsWith(
+        `Review instructions:\n${DEFAULT_REVIEW_INSTRUCTIONS}`,
+      ),
+    );
+  const custom = review({
+    instructions: "  Be strict about tests.\nCheck types.\n  ",
+  });
+  assert.ok(
+    custom.endsWith(
+      "Review instructions:\nBe strict about tests.\nCheck types.",
+    ),
+  );
+  assert.ok(!custom.includes(DEFAULT_REVIEW_INSTRUCTIONS));
+});
+test("review task is a headless, non-isolated card linked to the task under review", () => {
+  const t = task("task-1", {
+    title: "Add login",
+    projectId: "project-1",
+    priority: "high",
+    cwd: "C:\\Task",
+    worktree: "C:\\Task\\wt",
+    isolation: true,
+    dependencies: ["task-0"],
+    changeRequest: "Fix it",
+    status: "review",
+  });
+  assert.deepEqual(
+    reviewTaskFor(t, run({ cwd: "C:\\Run" }), "claude", "PROMPT", {
+      id: "task-2",
+      now: 99,
+    }),
+    {
+      id: "task-2",
+      title: "Review: Add login",
+      prompt: "PROMPT",
+      agentId: "claude",
+      cwd: "C:\\Run",
+      mode: "headless",
+      status: "backlog",
+      projectId: "project-1",
+      priority: "high",
+      createdAt: 99,
+      reviewOf: "task-1",
+      isolation: false,
+      dependencies: [],
+    },
+  );
+  assert.equal(
+    reviewTaskFor(task("a"), undefined, "claude", "P", { id: "b", now: 1 })
+      .priority,
+    "normal",
+  );
+});
+test("review task works in the run folder, then the worktree, then the task folder", () => {
+  const cwd = (t, r) =>
+    reviewTaskFor(t, r, "claude", "P", { id: "b", now: 1 }).cwd;
+  const t = task("a", { cwd: "C:\\Task", worktree: "C:\\wt" });
+  assert.equal(cwd(t, run({ cwd: "C:\\Run" })), "C:\\Run");
+  assert.equal(cwd(t, run()), "C:\\wt");
+  assert.equal(cwd(t, run({ cwd: "" })), "C:\\wt");
+  assert.equal(cwd(t, undefined), "C:\\wt");
+  assert.equal(cwd(task("a", { cwd: "C:\\Task" }), run()), "C:\\Task");
+  assert.equal(cwd(task("a"), run()), undefined);
+  assert.equal(cwd(task("a", { cwd: "" }), undefined), undefined);
+});
+test("reviewer defaults to a different enabled agent", () => {
+  const agents = [
+    { id: "claude", enabled: true },
+    { id: "off", enabled: false },
+    { id: "codex", enabled: true },
+    { id: "gemini", enabled: true },
+  ];
+  assert.equal(pickReviewer(agents, "claude"), "codex");
+  assert.equal(pickReviewer(agents, "codex"), "claude");
+  assert.equal(pickReviewer(agents, "missing"), "claude");
+  assert.equal(
+    pickReviewer(
+      [
+        { id: "off", enabled: false },
+        { id: "codex", enabled: true },
+        { id: "claude", enabled: true },
+      ],
+      "off",
+    ),
+    "codex",
+  );
+});
+test("reviewer falls back to the builder when it is the only agent enabled", () => {
+  assert.equal(
+    pickReviewer(
+      [
+        { id: "claude", enabled: true },
+        { id: "codex", enabled: false },
+      ],
+      "claude",
+    ),
+    "claude",
+  );
+  assert.equal(
+    pickReviewer(
+      [
+        { id: "claude", enabled: false },
+        { id: "codex", enabled: true },
+      ],
+      "claude",
+    ),
+    "codex",
+  );
+  assert.equal(
+    pickReviewer([{ id: "claude", enabled: false }], "claude"),
+    undefined,
+  );
+  assert.equal(pickReviewer([], "claude"), undefined);
+});
+test("reviewsOf lists live reviews of one task in board order", () => {
+  const tasks = [
+    task("a"),
+    task("r2", { reviewOf: "a" }),
+    task("r1", { reviewOf: "b" }),
+    task("r3", { reviewOf: "a", archived: true }),
+    task("r0", { reviewOf: "a", status: "done" }),
+  ];
+  assert.deepEqual(
+    reviewsOf(tasks, "a").map((t) => t.id),
+    ["r2", "r0"],
+  );
+  assert.deepEqual(
+    reviewsOf(tasks, "b").map((t) => t.id),
+    ["r1"],
+  );
+  assert.deepEqual(reviewsOf(tasks, "none"), []);
+});
+test("workspace keeps a valid change request and review link", () => {
+  const w = normalizeWorkspace({
+    agents: [],
+    tasks: [
+      task("a"),
+      task("b", { reviewOf: "a", changeRequest: "  Fix it\n" }),
+    ],
+  });
+  assert.equal(w.tasks[1].reviewOf, "a");
+  assert.equal(w.tasks[1].changeRequest, "  Fix it\n");
+  assert.equal(w.tasks[0].reviewOf, undefined);
+  assert.equal(w.tasks[0].changeRequest, undefined);
+});
+test("workspace drops dangling and self review links, and blank or malformed requests", () => {
+  const w = normalizeWorkspace({
+    agents: [],
+    tasks: [
+      task("a", { reviewOf: "gone" }),
+      task("b", { reviewOf: "b" }),
+      task("c", { reviewOf: "" }),
+      task("d", { reviewOf: 7, changeRequest: 42 }),
+      task("e", { changeRequest: " \n\t" }),
+      task("f", { changeRequest: "" }),
+    ],
+  });
+  for (const t of w.tasks) {
+    assert.equal(t.reviewOf, undefined, t.id);
+    assert.equal(t.changeRequest, undefined, t.id);
+  }
+});
+test("workspace review fields survive a strict round trip, and a dangling link is not a corrupt backup", () => {
+  const w = normalizeWorkspace({
+    agents: [],
+    tasks: [task("a"), task("b", { reviewOf: "a", changeRequest: "Fix it" })],
+  });
+  const back = normalizeWorkspace(JSON.parse(JSON.stringify(w)), true);
+  assert.equal(back.tasks[1].reviewOf, "a");
+  assert.equal(back.tasks[1].changeRequest, "Fix it");
+  assert.doesNotThrow(() =>
+    normalizeWorkspace(
+      { agents: [], tasks: [task("a", { reviewOf: "gone" })] },
+      true,
+    ),
+  );
+  assert.equal(
+    normalizeWorkspace(
+      { agents: [], tasks: [task("a", { reviewOf: "gone" })] },
+      true,
+    ).tasks[0].reviewOf,
+    undefined,
+  );
+});
+test("review instructions default when missing or not a string, and are capped", () => {
+  assert.equal(
+    DEFAULT_SETTINGS.reviewInstructions,
+    DEFAULT_REVIEW_INSTRUCTIONS,
+  );
+  assert.ok(DEFAULT_REVIEW_INSTRUCTIONS.length < 600);
+  assert.match(DEFAULT_REVIEW_INSTRUCTIONS, /APPROVE or REQUEST CHANGES/);
+  for (const raw of [
+    undefined,
+    null,
+    {},
+    { reviewInstructions: 5 },
+    { reviewInstructions: null },
+    { reviewInstructions: ["x"] },
+  ])
+    assert.equal(
+      normalizeSettings(raw).reviewInstructions,
+      DEFAULT_REVIEW_INSTRUCTIONS,
+    );
+  assert.equal(REVIEW_INSTRUCTIONS_MAX, 4000);
+  assert.equal(
+    normalizeSettings({
+      reviewInstructions: "x".repeat(REVIEW_INSTRUCTIONS_MAX + 500),
+    }).reviewInstructions,
+    "x".repeat(REVIEW_INSTRUCTIONS_MAX),
+  );
+  assert.equal(
+    normalizeSettings({ reviewInstructions: "Custom" }).reviewInstructions,
+    "Custom",
+  );
+  assert.equal(
+    normalizeSettings({ reviewInstructions: "" }).reviewInstructions,
+    "",
+  );
+  assert.equal(
+    normalizeWorkspace({ agents: [], settings: { reviewInstructions: "" } })
+      .settings.reviewInstructions,
+    "",
+  );
+});

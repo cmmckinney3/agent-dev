@@ -16,9 +16,11 @@ import {
   CONCURRENCY_RANGE,
   CURSOR_STYLES,
   CursorStyle,
+  DEFAULT_REVIEW_INSTRUCTIONS,
   FONT_SIZE_RANGE,
   HEADLESS_COMPLETIONS,
   HeadlessCompletion,
+  REVIEW_INSTRUCTIONS_MAX,
   SCROLLBACK_RANGE,
   Settings,
   USAGE_LIMITS,
@@ -718,6 +720,37 @@ export default function SettingsPage({
                 </option>
               ))}
             </select>
+          </Row>
+          <Row
+            label="Review instructions"
+            hint="Appended to every agent-review prompt. Leave blank to use the built-in checklist."
+            htmlFor="set-review-instructions"
+          >
+            <div className="set-stack">
+              <textarea
+                id="set-review-instructions"
+                className="set-input set-textarea"
+                rows={5}
+                maxLength={REVIEW_INSTRUCTIONS_MAX}
+                value={settings.reviewInstructions}
+                placeholder={DEFAULT_REVIEW_INSTRUCTIONS}
+                onChange={(e) =>
+                  onChange({ reviewInstructions: e.target.value })
+                }
+              />
+              <button
+                type="button"
+                className="set-btn subtle"
+                disabled={
+                  settings.reviewInstructions === DEFAULT_REVIEW_INSTRUCTIONS
+                }
+                onClick={() =>
+                  onChange({ reviewInstructions: DEFAULT_REVIEW_INSTRUCTIONS })
+                }
+              >
+                Reset to default
+              </button>
+            </div>
           </Row>
           <Row
             label="Confirm before archiving a card"

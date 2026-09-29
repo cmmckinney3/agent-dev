@@ -204,6 +204,8 @@ export default function TaskBoard(p: Props) {
                                 <span className="priority-high">High</span>
                               )}
                               {task.isolation && <span>Worktree</span>}
+                              {task.reviewOf && <span>Review</span>}
+                              {task.changeRequest && <span>Changes</span>}
                             </div>
                             <button
                               className="task-title-link"

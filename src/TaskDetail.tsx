@@ -1,6 +1,8 @@
 import { useState } from "react";
 import Modal from "./Modal";
 import RunReview from "./RunReview";
+import { AgentConfig } from "./agents";
+import { pickReviewer } from "./review";
 import { Task } from "./tasks";
 import { RunRecord } from "./usage";
 import { taskBlocker } from "./workspace";
@@ -9,10 +11,16 @@ export default function TaskDetail({
   task,
   tasks,
   runs,
+  agents,
+  reviews,
+  reviewedTask,
   onClose,
   onEdit,
   onRun,
   onReview,
+  onRequestReview,
+  onRequestChanges,
+  onOpenTask,
   onArchive,
   onDuplicate,
   onFocus,
@@ -23,10 +31,19 @@ export default function TaskDetail({
   task: Task;
   tasks: Task[];
   runs: RunRecord[];
+  /** Enabled agents a review can be assigned to. */
+  agents: AgentConfig[];
+  /** Live agent-review tasks of this task. */
+  reviews: Task[];
+  /** The task this one reviews, when it is an agent-review task. */
+  reviewedTask?: Task;
   onClose: () => void;
   onEdit: () => void;
   onRun: () => void;
   onReview: () => void;
+  onRequestReview: (agentId: string) => void;
+  onRequestChanges: (feedback: string, rerun: boolean) => void;
+  onOpenTask: (id: string) => void;
   onArchive: () => void;
   onDuplicate: () => void;
   onFocus: () => void;
@@ -37,8 +54,25 @@ export default function TaskDetail({
   const [selected, setSelected] = useState(runs[runs.length - 1]?.id ?? "");
   const [notes, setNotes] = useState(task.reviewNotes ?? "");
   const [tab, setTab] = useState<"overview" | "runs">("overview");
+  const [changing, setChanging] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [reviewerId, setReviewerId] = useState("");
   const run = runs.find((r) => r.id === selected) ?? runs[runs.length - 1];
   const blocker = taskBlocker(task, tasks);
+  const reviewer = agents.some((a) => a.id === reviewerId)
+    ? reviewerId
+    : pickReviewer(agents, task.agentId);
+  // A task in Review or Done has run even when history recording was off or its
+  // records were pruned; the reviewer then inspects the working tree itself.
+  const reviewBlock = task.paneId
+    ? "Wait for the current run to finish"
+    : runs.length === 0 && task.status === "backlog"
+      ? "Run the task first"
+      : undefined;
+  const sendChanges = (rerun: boolean) => {
+    onRequestChanges(feedback, rerun);
+    setChanging(false);
+  };
   return (
     <Modal title={task.title} onClose={onClose} wide>
       <div className="detail-body">
@@ -101,8 +135,40 @@ export default function TaskDetail({
         </div>
         {tab === "overview" ? (
           <>
+            {task.reviewOf && reviewedTask && (
+              <div className="detail-actions">
+                <span className="muted">
+                  Agent review of “{reviewedTask.title}”
+                </span>
+                <button
+                  className="text-button"
+                  onClick={() => onOpenTask(reviewedTask.id)}
+                >
+                  Open reviewed task
+                </button>
+              </div>
+            )}
             <h3>Request</h3>
             <pre className="request-view">{task.prompt}</pre>
+            {task.changeRequest && (
+              <>
+                <h3>Pending change request</h3>
+                <pre className="request-view">{task.changeRequest}</pre>
+                <div className="detail-actions">
+                  <span className="muted">
+                    Sent with every run, after the original request, until the
+                    task is marked done.
+                  </span>
+                  <button
+                    className="text-button"
+                    disabled={Boolean(task.paneId)}
+                    onClick={() => onUpdate({ changeRequest: undefined })}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </>
+            )}
             {task.worktree && (
               <p className="muted">Isolated worktree: {task.worktree}</p>
             )}
@@ -132,13 +198,11 @@ export default function TaskDetail({
               </button>
               <button
                 className="btn"
-                onClick={() =>
-                  onUpdate({
-                    attention: "Changes requested",
-                    status: "backlog",
-                    reviewedAt: undefined,
-                  })
-                }
+                aria-expanded={changing}
+                onClick={() => {
+                  if (!changing) setFeedback(task.changeRequest ?? "");
+                  setChanging(!changing);
+                }}
                 disabled={Boolean(task.paneId)}
               >
                 Request changes
@@ -154,10 +218,115 @@ export default function TaskDetail({
                 {task.attention ? "Clear attention" : "Mark needs input"}
               </button>
             </div>
+            {changing && (
+              <>
+                <label className="review-notes">
+                  What needs to change?
+                  <textarea
+                    rows={4}
+                    autoFocus
+                    value={feedback}
+                    onChange={(e) => setFeedback(e.target.value)}
+                    placeholder="Specific changes for the next run. The agent receives them after the original request."
+                  />
+                </label>
+                <div className="detail-actions">
+                  <button
+                    className="btn primary"
+                    disabled={Boolean(task.paneId)}
+                    onClick={() => sendChanges(true)}
+                  >
+                    Send back and re-run
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={Boolean(task.paneId)}
+                    onClick={() => sendChanges(false)}
+                  >
+                    Send back to backlog
+                  </button>
+                  <button
+                    className="text-button"
+                    onClick={() => setChanging(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
             {task.reviewedAt && (
               <p className="muted">
                 Reviewed {new Date(task.reviewedAt).toLocaleString()}
               </p>
+            )}
+            {!task.reviewOf && (
+              <>
+                <h3>Agent review</h3>
+                <p className="muted">
+                  A second agent runs headless in the same folder, reads the
+                  changes, and reports findings without editing files.
+                </p>
+                {agents.length ? (
+                  <div className="detail-actions">
+                    <label className="attempt-picker">
+                      Reviewer
+                      <select
+                        value={reviewer ?? ""}
+                        onChange={(e) => setReviewerId(e.target.value)}
+                      >
+                        {agents.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.id === task.agentId
+                              ? `${a.name} (same agent)`
+                              : a.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      className="btn"
+                      disabled={Boolean(reviewBlock) || !reviewer}
+                      title={reviewBlock}
+                      onClick={() => reviewer && onRequestReview(reviewer)}
+                    >
+                      Ask for review
+                    </button>
+                  </div>
+                ) : (
+                  <p className="muted">
+                    Enable an agent in Settings to request a review.
+                  </p>
+                )}
+                {reviews.length > 0 && (
+                  <ul className="review-links">
+                    {reviews.map((r) => (
+                      <li key={r.id}>
+                        <span className={`outcome ${r.status}`}>
+                          {r.status}
+                        </span>
+                        {r.lastExitCode !== undefined && (
+                          <span className="muted">
+                            {r.lastExitCode === 0
+                              ? "ok"
+                              : `exit ${r.lastExitCode}`}
+                          </span>
+                        )}
+                        <button
+                          className="text-button"
+                          onClick={() => onOpenTask(r.id)}
+                        >
+                          {r.title}
+                        </button>
+                        {r.createdAt !== undefined && (
+                          <time className="muted">
+                            {new Date(r.createdAt).toLocaleString()}
+                          </time>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </>
         ) : (

@@ -52,6 +52,11 @@ export interface Settings {
   headlessCompletion: HeadlessCompletion;
   /** Require a second click to delete a task card. */
   confirmTaskDelete: boolean;
+  /**
+   * Appended to every agent-review prompt. Empty falls back to
+   * DEFAULT_REVIEW_INSTRUCTIONS when the prompt is built.
+   */
+  reviewInstructions: string;
 
   // ---- Workspace ----
   /** Require a second click on "Stop all". */
@@ -71,6 +76,17 @@ export interface Settings {
 
 export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
+/** Longest review-instructions text kept; the prompt travels as a CLI argument. */
+export const REVIEW_INSTRUCTIONS_MAX = 4000;
+
+/** Checklist used when the review-instructions setting is blank. */
+export const DEFAULT_REVIEW_INSTRUCTIONS = [
+  "- Does the change do what was asked?",
+  "- Look for bugs, regressions, missing tests and unsafe edge cases.",
+  "- If it is cheap, run the project's quick checks (tests, type check).",
+  "Finish with a verdict line, APPROVE or REQUEST CHANGES, followed by the specific changes needed.",
+].join("\n");
+
 export const DEFAULT_SETTINGS: Settings = {
   notifyOnCompletion: true,
   fontSize: 13,
@@ -84,6 +100,7 @@ export const DEFAULT_SETTINGS: Settings = {
   maxConcurrentRuns: 0,
   headlessCompletion: "review",
   confirmTaskDelete: true,
+  reviewInstructions: DEFAULT_REVIEW_INSTRUCTIONS,
 
   confirmStopAll: false,
   broadcastAppendEnter: true,
@@ -144,7 +161,8 @@ const clamp = (n: number, min: number, max: number) =>
  */
 export function normalizeSettings(raw: unknown): Settings {
   const d = DEFAULT_SETTINGS;
-  if (!raw || typeof raw !== "object") return { ...d, openRouter: { ...d.openRouter } };
+  if (!raw || typeof raw !== "object")
+    return { ...d, openRouter: { ...d.openRouter } };
   const r = raw as Record<string, unknown>;
   const bool = (v: unknown, fb: boolean) => (typeof v === "boolean" ? v : fb);
   const str = (v: unknown, fb: string) => (typeof v === "string" ? v : fb);
@@ -153,7 +171,12 @@ export function normalizeSettings(raw: unknown): Settings {
   const or = (r.openRouter ?? {}) as Record<string, unknown>;
   return {
     notifyOnCompletion: bool(r.notifyOnCompletion, d.notifyOnCompletion),
-    fontSize: num(r.fontSize, d.fontSize, FONT_SIZE_RANGE.min, FONT_SIZE_RANGE.max),
+    fontSize: num(
+      r.fontSize,
+      d.fontSize,
+      FONT_SIZE_RANGE.min,
+      FONT_SIZE_RANGE.max,
+    ),
     fontFamily: str(r.fontFamily, d.fontFamily),
     scrollback: num(
       r.scrollback,
@@ -180,6 +203,11 @@ export function normalizeSettings(raw: unknown): Settings {
       ? (r.headlessCompletion as HeadlessCompletion)
       : d.headlessCompletion,
     confirmTaskDelete: bool(r.confirmTaskDelete, d.confirmTaskDelete),
+    // Empty is kept as-is: it means "use the built-in checklist" at build time.
+    reviewInstructions: str(r.reviewInstructions, d.reviewInstructions).slice(
+      0,
+      REVIEW_INSTRUCTIONS_MAX,
+    ),
 
     confirmStopAll: bool(r.confirmStopAll, d.confirmStopAll),
     broadcastAppendEnter: bool(r.broadcastAppendEnter, d.broadcastAppendEnter),
@@ -194,7 +222,8 @@ export function normalizeSettings(raw: unknown): Settings {
     openRouter: {
       enabled: bool(or.enabled, d.openRouter.enabled),
       apiKey: str(or.apiKey, d.openRouter.apiKey).trim(),
-      baseUrl: str(or.baseUrl, d.openRouter.baseUrl).trim() || OPENROUTER_BASE_URL,
+      baseUrl:
+        str(or.baseUrl, d.openRouter.baseUrl).trim() || OPENROUTER_BASE_URL,
       model: str(or.model, d.openRouter.model).trim(),
     },
   };

@@ -170,6 +170,23 @@
   width: 290px;
 }
 
+/* Multi-line input (review instructions) with its action button underneath. */
+.set-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 420px;
+  max-width: 100%;
+}
+
+.set-textarea {
+  width: 100%;
+  min-height: 96px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
 /* Key row: an input plus one or two adjacent buttons. */
 .set-key {
   display: flex;

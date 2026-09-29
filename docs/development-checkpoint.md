@@ -1,4 +1,4 @@
-# Development checkpoint — September 11, 2026
+# Development checkpoint — September 29, 2026
 
 **Development only: do not replace, install over, or modify the installed Crucible
 app.** Resume this working tree; do not reset it. Many files were already modified
@@ -7,6 +7,120 @@ before this implementation.
 The resume list from the previous checkpoint (September 10) is complete except for
 the native desktop verification noted under "Still owed" below. Everything else in
 that list was either implemented or verified as already correct.
+
+## Review loop (September 29)
+
+Plan and rationale: `docs/review-loop-plan.md`. Frontend only — no Rust changes.
+
+- **Change requests now reach the next run.** "Request changes" used to move the
+  card to Backlog with `attention: "Changes requested"` and nothing else, so the next
+  launch re-sent the original prompt and the reviewer's feedback never reached the
+  agent. The text is now stored on the task as `changeRequest`, and every launch
+  sends `launchPrompt(task)` (`src/tasks.ts`): the request, a blank line, the
+  heading `Changes requested after review:`, then the feedback. A blank request
+  returns `task.prompt` unchanged. It stays until the task is marked reviewed &
+  done, **Cleared** in task detail, or replaced by a new request. `startTask` and
+  `createRun` both go through `launchPrompt`, so a run record's `prompt` stores
+  exactly what was sent. A card with a pending request shows a `Changes` chip.
+  `draftFromTask` stays a whitelist and carries neither new field.
+- **Agent review tasks.** Task detail gains an **Agent review** block: pick an
+  enabled reviewer (default is a different agent from the builder when one exists,
+  via `pickReviewer`) and **Ask for review**, which is disabled while the task runs
+  or before it has any run. That creates a `Review: <title>` task in the same
+  project through `reviewTaskFor`: `mode: "headless"`, `isolation: false` so it
+  sees the builder's files rather than a fresh worktree, `cwd` from the builder's
+  last run folder (then its worktree, then its own cwd), and `reviewOf` pointing at
+  the builder task. It starts immediately and queues like any task when no pane is
+  free. The prompt (`buildReviewPrompt`, `src/review.ts`) carries the request that
+  was sent, where to look (`git diff HEAD` for a worktree, `git diff` with a caveat
+  for a shared folder), the changed-file list captured for the run (capped), the
+  builder's exit code and the review instructions. The builder's detail lists its
+  reviews (`reviewsOf`) with an **Open** link; a review task links back and shows a
+  `Review` chip. Reviewers report findings only; they are told not to edit files.
+- **Settings → Task board → Review instructions.** `reviewInstructions` is a
+  textarea appended to every reviewer prompt (capped at `REVIEW_INSTRUCTIONS_MAX`
+  = 4000). A blank value falls back to `DEFAULT_REVIEW_INSTRUCTIONS`, and **Reset
+  to default** restores it. The default asks for correctness, regression, test and
+  edge-case checks and ends with an `APPROVE` or `REQUEST CHANGES` verdict line.
+- **Argv safety constraint.** Prompts travel as argv (32 KiB on Windows), and a
+  non-npm batch agent still goes through `cmd.exe /c` (see below). The reviewer
+  prompt therefore never embeds diff text or agent output — only fixed text, the
+  user's own request and change request, file paths (control characters stripped,
+  each truncated), status words and an exit code. Only `path` and `status` are read
+  from the file list, so an extra `diff` property cannot leak in.
+- **No `STORAGE_KEY` bump** (still `agentdev.workspace.v7`). `changeRequest` and
+  `reviewOf` are optional, additive task fields that `normalizeWorkspace` tolerates
+  whether present or absent, so no stored workspace needs migrating and the
+  top-level `Workspace` shape is unchanged. `changeRequest` is kept only when it
+  has non-blank text; `reviewOf` is dropped when dangling or self-referential, even
+  in strict mode, since a dangling link is not a corrupt backup.
+- `duplicateTask` resets both fields, and **Mark reviewed & done** clears
+  `changeRequest`.
+
+- A change request is also cleared whenever the task reaches Done another way
+  (dragged there, or a headless exit 0 under "Done if exit 0"), so a later re-run
+  cannot resend stale feedback. **Ask for review** stays available for a task in
+  Review or Done with no run records (history recording off, or pruned); the
+  prompt then says no file list was captured. A ref guard stops a double click
+  from creating two reviews while `read_run` is in flight.
+
+**Also fixed in this pass**
+
+- **Prompts through `cmd.exe` (security).** `resolve_command` routed every Windows
+  npm `.cmd` shim (`codex.cmd`, npm-installed `claude.cmd`) through `cmd.exe /c`.
+  portable-pty quotes arguments MSVC-style (`"` becomes `\"`, confirmed in
+  `cmdbuilder.rs`), which cmd.exe does not honour: a prompt such as
+  `say "hi" & echo X` ran a second command, `%VAR%` expanded, and a line break
+  ended the command, silently truncating multi-line prompts. `npm_shim_command`
+  now reads the shim (modern and legacy cmd-shim layouts), and launches its
+  script with `node` directly, using the `node.exe` beside the shim first, then
+  `node` on `PATH`. An `.exe` target is launched as itself. Any other
+  `.cmd`/`.bat` still uses `cmd.exe /c`, but `spawn_agent` now refuses a prompt
+  holding `" % ! ^ & | < >` or a line break with an explicit error instead of
+  launching it. `check_agent` shares `resolve_command`, so the version check
+  follows the same path. New tests: `shim_tests::*` (not Windows-gated).
+- **Modal keyboard handling.** `Modal` listened for keys on its own panel. An
+  action that removes the focused control, such as the new Clear or Send back
+  buttons, dropped focus to `<body>`. Escape then stopped closing the dialog, and
+  Tab walked into the page behind an `aria-modal` dialog. The listener now sits on
+  the document and answers only for the topmost dialog, since the palette can open
+  over task detail. Tab from outside the panel re-enters it.
+- **Version 0.3.0** in `tauri.conf.json`, `Cargo.toml`, `package.json` and both
+  lockfiles, so the next MSI upgrades the installed 0.2.0 in place. `upgradeCode`
+  and `identifier` are unchanged.
+
+**Verification**
+
+- `npm test` — **44 passed** (22 new in `tests/review.test.mjs`).
+- `npm run build` — passes (strict `tsc`); only the existing ~675 kB chunk note.
+- `cd src-tauri && cargo test` — **10 passed** on Linux, including the 3 new shim
+  tests. The Windows-gated PTY and DPAPI tests could not run here.
+  `cargo fmt --check` is clean.
+- Driven in Chromium against the vite dev server (seeded workspace, 1280×820 and
+  900×600), with no console errors. Checks:
+  - the `Changes`/`Review` card chips, the pending change request, and the
+    reviewer default (a different agent) with `(same agent)` labelling;
+  - the Request changes form: `aria-expanded`, prefilled and focused, closing on
+    send, and the card moving to Backlog;
+  - the review ↔ reviewed-task links, and Clear removing the chip;
+  - after Clear: Tab stays in the dialog and Escape closes it;
+  - palette over detail: Escape closes one layer at a time;
+  - the Settings review instructions: Reset disabled at default, search finds the
+    row;
+  - no horizontal overflow at 900 px.
+- Prettier 3.6.2: every changed file that was clean before is still clean.
+  `settings.ts` and `Modal.tsx` are now clean. `workspace.ts` and
+  `SettingsPage.tsx` were not clean before and were left alone, with the new lines
+  written to the formatter's style.
+
+**Still owed**
+
+- Nothing was driven natively: no Windows desktop was available in this session.
+  To check end to end:
+  - launch Codex (an npm shim) with a prompt containing `"`, `&`, `%PATH%` and a
+    line break, and confirm it arrives intact;
+  - run **Ask for review** from the app window;
+  - run the Windows-gated Rust tests.
 
 ## Implemented
 
@@ -19,6 +133,7 @@ that list was either implemented or verified as already correct.
 - Native atomic workspace storage, Windows DPAPI credential vault, redacted portable backups, visible save errors, bounded recordings, run-retention cleanup.
 - Terminal instances live outside React and survive page/project changes. Start idle cannot replace live sessions. Delivery failures reject. Stop during launch waits.
 - Windows process reaping runs independently of the ConPTY reader: closing the master after process exit produces EOF.
+- Review loop: change requests that reach the next run via `launchPrompt`, and linked headless agent-review tasks with configurable review instructions. npm cmd-shims launch without `cmd.exe`.
 
 ## Closed in this pass
 
