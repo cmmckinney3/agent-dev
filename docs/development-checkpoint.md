@@ -35,6 +35,9 @@ REQUESTED` after Markdown decoration and an optional `Verdict:` label; without
   request, without repeating it) and focuses it. Nothing is sent until the user
   chooses Send back. A review's own detail shows its verdict. Cards read
   **Review · Approved** / **Review · Changes**.
+- **Version 0.5.0** in `tauri.conf.json`, `Cargo.toml`, `package.json` and both
+  lockfiles, so the next MSI upgrades an installed 0.4.0 in place. `upgradeCode`
+  and `identifier` are unchanged.
 - `plainOutput` moved from `RunReview.tsx` to `review.ts` so the parser can be
   tested. `Task.verdict` is optional and normalized (dropped when malformed,
   findings capped); no `STORAGE_KEY` bump.
