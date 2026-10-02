@@ -170,7 +170,13 @@ failing the whole load. Portable backups are redacted by default.
   request/change request, file paths (control characters stripped, length capped),
   status words and an exit code. Prompts travel as argv (32 KiB on Windows), and a
   non-npm batch agent still goes through `cmd.exe /c`, which refuses the characters
-  a diff is full of.
+  a diff is full of. `parseVerdict` reads a finished review's last `APPROVE` /
+  `REQUEST CHANGES` line and findings from its saved output (`plainOutput` strips
+  terminal escapes; lines echoed from the prompt are skipped). App stores the
+  result as `Task.verdict` on the review, flags the reviewed task and moves the
+  review card to Done. Reviewer output reaches a prompt **only** through the
+  Request changes form (`changeRequestFrom` prefills it), where the user sees and
+  edits it — never automatically.
 - `src/workspace.ts` — the `Project`/`Workspace`/`PromptTemplate` model plus
   `normalizeWorkspace`, `redactWorkspace`, `retainRuns`, `taskBlocker`,
   `queueCandidates` and `hasDependencyCycle`. Pure, and the most heavily tested

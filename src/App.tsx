@@ -47,9 +47,12 @@ import {
 } from "./tasks";
 import {
   buildReviewPrompt,
+  ParsedVerdict,
+  parseVerdict,
   ReviewFile,
   reviewsOf,
   reviewTaskFor,
+  VERDICT_LABELS,
 } from "./review";
 import { RunRecord } from "./usage";
 import {
@@ -406,6 +409,9 @@ export default function App({
                 .requestUserAttention(UserAttentionType.Informational)
                 .catch(() => {});
           }
+          // The output log is synced before agent-exit is sent, so it is
+          // complete by now.
+          if (event.status === "exited") void readVerdict(event.run);
         }
       }),
     [],
@@ -447,6 +453,72 @@ export default function App({
     const timer = setTimeout(() => setFlash(undefined), 1600);
     return () => clearTimeout(timer);
   }, [flash]);
+
+  /**
+   * An agent review just finished: read its APPROVE / REQUEST CHANGES line from
+   * the saved output and record it on the review, flagging the reviewed task.
+   * Nothing is sent anywhere; the owner decides what to do with the findings.
+   */
+  const readVerdict = async (run: RunRecord) => {
+    const review = latest.current.tasks.find((t) => t.id === run.taskId);
+    if (!review?.reviewOf) return;
+    let parsed: ParsedVerdict | undefined;
+    let problem: string | undefined;
+    if (!isTauri() || !latest.current.settings.recordUsage)
+      problem =
+        "Run recording is off, so the verdict could not be read. Check the reviewer's session for it.";
+    else
+      try {
+        const data = await invoke<ReviewData>("read_run", {
+          runId: run.id,
+          refresh: false,
+        });
+        parsed = parseVerdict(data.output, run.prompt);
+        if (!parsed)
+          problem = data.truncated
+            ? "The review output was too long to read a verdict from."
+            : "No APPROVE or REQUEST CHANGES line found in the review output.";
+      } catch (e) {
+        problem = `Could not read the review output: ${String(e)}`;
+      }
+    const verdict = parsed && { ...parsed, runId: run.id, at: Date.now() };
+    change((v) => ({
+      ...v,
+      tasks: v.tasks.map((t) => {
+        // With a verdict the review card's job is done: its findings now show
+        // on the reviewed task, so it leaves the Review column (unless headless
+        // runs are set to stay put).
+        // A re-run started while the output was being read owns the card now.
+        if (t.id === review.id && !t.paneId)
+          return verdict
+            ? {
+                ...t,
+                verdict,
+                attention: undefined,
+                status:
+                  v.settings.headlessCompletion === "stay" ? t.status : "done",
+              }
+            : { ...t, verdict: undefined, attention: problem };
+        if (verdict && t.id === review.reviewOf && !t.paneId)
+          return {
+            ...t,
+            attention:
+              verdict.decision === "approve"
+                ? "Agent review approved"
+                : "Agent review requested changes",
+          };
+        return t;
+      }),
+    }));
+    const reviewed = latest.current.tasks.find((t) => t.id === review.reviewOf);
+    if (verdict && reviewed)
+      notify(
+        `Review of “${reviewed.title}”: ${VERDICT_LABELS[verdict.decision].toLowerCase()}`,
+        () => showTask(reviewed.id),
+        "Open task",
+      );
+    else if (problem) notify(problem, () => showTask(review.id), "Open review");
+  };
 
   const slotProject = (id: string) =>
     latest.current.projects.find((p) => paneIds(p.layout).includes(id));
@@ -651,6 +723,7 @@ export default function App({
       attention: undefined,
       interrupted: false,
       lastExitCode: undefined,
+      verdict: undefined,
     });
     try {
       let cwd = task.cwd || p.cwd;
@@ -840,6 +913,7 @@ export default function App({
           reviewedAt: undefined,
           changeRequest: undefined,
           reviewOf: undefined,
+          verdict: undefined,
           createdAt: Date.now(),
         },
       ],

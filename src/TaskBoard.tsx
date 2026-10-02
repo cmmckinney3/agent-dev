@@ -204,7 +204,19 @@ export default function TaskBoard(p: Props) {
                                 <span className="priority-high">High</span>
                               )}
                               {task.isolation && <span>Worktree</span>}
-                              {task.reviewOf && <span>Review</span>}
+                              {task.reviewOf && (
+                                <span
+                                  className={
+                                    task.verdict
+                                      ? `verdict-chip ${task.verdict.decision}`
+                                      : undefined
+                                  }
+                                >
+                                  {task.verdict
+                                    ? `Review · ${task.verdict.decision === "approve" ? "Approved" : "Changes"}`
+                                    : "Review"}
+                                </span>
+                              )}
                               {task.changeRequest && <span>Changes</span>}
                             </div>
                             <button

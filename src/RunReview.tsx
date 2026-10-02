@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { RunRecord, formatDuration, runDuration } from "./usage";
+import { plainOutput } from "./review";
 import { FolderIcon, RestartIcon } from "./icons";
 export interface ReviewData {
   output: string;
@@ -11,14 +12,6 @@ export interface ReviewData {
     warnings: string[];
     files: { path: string; status: string; diff: string }[];
   };
-}
-export function plainOutput(text: string): string {
-  return text
-    .replace(/\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*(?:\x07|\x1b\\)/g, "")
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/\x1b[()][A-Z0-9]/g, "")
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n");
 }
 export default function RunReview({
   run,

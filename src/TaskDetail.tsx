@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Modal from "./Modal";
 import RunReview from "./RunReview";
 import { AgentConfig } from "./agents";
-import { pickReviewer } from "./review";
+import { changeRequestFrom, pickReviewer, VERDICT_LABELS } from "./review";
 import { Task } from "./tasks";
 import { RunRecord } from "./usage";
 import { taskBlocker } from "./workspace";
@@ -57,6 +57,21 @@ export default function TaskDetail({
   const [changing, setChanging] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [reviewerId, setReviewerId] = useState("");
+  const feedbackRef = useRef<HTMLTextAreaElement>(null);
+  // The newest review that produced a verdict; its findings can become the
+  // next change request.
+  const latestVerdict = [...reviews].reverse().find((r) => r.verdict)?.verdict;
+  const useFindings = () => {
+    if (!latestVerdict) return;
+    setFeedback(
+      changeRequestFrom(
+        changing ? feedback : task.changeRequest,
+        latestVerdict,
+      ),
+    );
+    setChanging(true);
+    requestAnimationFrame(() => feedbackRef.current?.focus());
+  };
   const run = runs.find((r) => r.id === selected) ?? runs[runs.length - 1];
   const blocker = taskBlocker(task, tasks);
   const reviewer = agents.some((a) => a.id === reviewerId)
@@ -148,6 +163,23 @@ export default function TaskDetail({
                 </button>
               </div>
             )}
+            {task.reviewOf && task.verdict && (
+              <>
+                <h3>Verdict</h3>
+                <div className="detail-actions">
+                  <span className={`outcome verdict-${task.verdict.decision}`}>
+                    {VERDICT_LABELS[task.verdict.decision]}
+                  </span>
+                  <span className="muted">
+                    Read from the reviewer's output ·{" "}
+                    {new Date(task.verdict.at).toLocaleString()}
+                  </span>
+                </div>
+                {task.verdict.summary && (
+                  <pre className="request-view">{task.verdict.summary}</pre>
+                )}
+              </>
+            )}
             <h3>Request</h3>
             <pre className="request-view">{task.prompt}</pre>
             {task.changeRequest && (
@@ -223,6 +255,7 @@ export default function TaskDetail({
                 <label className="review-notes">
                   What needs to change?
                   <textarea
+                    ref={feedbackRef}
                     rows={4}
                     autoFocus
                     value={feedback}
@@ -304,6 +337,13 @@ export default function TaskDetail({
                         <span className={`outcome ${r.status}`}>
                           {r.status}
                         </span>
+                        {r.verdict && (
+                          <span
+                            className={`outcome verdict-${r.verdict.decision}`}
+                          >
+                            {VERDICT_LABELS[r.verdict.decision]}
+                          </span>
+                        )}
                         {r.lastExitCode !== undefined && (
                           <span className="muted">
                             {r.lastExitCode === 0
@@ -325,6 +365,44 @@ export default function TaskDetail({
                       </li>
                     ))}
                   </ul>
+                )}
+                {latestVerdict && (
+                  <div className="verdict-block">
+                    <div className="detail-actions">
+                      <span
+                        className={`outcome verdict-${latestVerdict.decision}`}
+                      >
+                        {VERDICT_LABELS[latestVerdict.decision]}
+                      </span>
+                      <span className="muted">
+                        Latest agent review findings
+                      </span>
+                      <span className="spacer" />
+                      {latestVerdict.decision === "changes" && (
+                        <button
+                          className="btn"
+                          disabled={
+                            Boolean(task.paneId) || !latestVerdict.summary
+                          }
+                          title={
+                            latestVerdict.summary
+                              ? "Open Request changes with these findings to edit and send"
+                              : "The reviewer gave no findings to use"
+                          }
+                          onClick={useFindings}
+                        >
+                          Use as change request
+                        </button>
+                      )}
+                    </div>
+                    {latestVerdict.summary ? (
+                      <pre className="request-view">
+                        {latestVerdict.summary}
+                      </pre>
+                    ) : (
+                      <p className="muted">The reviewer gave no findings.</p>
+                    )}
+                  </div>
                 )}
               </>
             )}

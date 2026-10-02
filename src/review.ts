@@ -10,7 +10,7 @@
 
 import { AgentConfig } from "./agents";
 import { DEFAULT_REVIEW_INSTRUCTIONS } from "./settings";
-import { Task, launchPrompt } from "./tasks";
+import { Task, VERDICT_SUMMARY_MAX, Verdict, launchPrompt } from "./tasks";
 import { RunRecord } from "./usage";
 
 export interface ReviewFile {
@@ -133,4 +133,112 @@ export function pickReviewer(
 /** Live (non-archived) review tasks of `taskId`, in board order. */
 export function reviewsOf(tasks: Task[], taskId: string): Task[] {
   return tasks.filter((t) => t.reviewOf === taskId && !t.archived);
+}
+
+/** Terminal output as plain text: escape sequences removed, CR as a line break. */
+export function plainOutput(text: string): string {
+  return text
+    .replace(/\x1b\](?:[^\x07\x1b]|\x1b(?!\\))*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b[()][A-Z0-9]/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+}
+
+export type ParsedVerdict = Pick<Verdict, "decision" | "summary">;
+
+/**
+ * A verdict line: optional Markdown decoration and a `Verdict:` label, then the
+ * keyword, then whatever the reviewer wrote after it on the same line.
+ */
+const VERDICT_LINE =
+  /^[\s>#*_`-]*(?:(?:final\s+)?(verdict)\b[\s*_`]*[:\-–—]?[\s*_`]*)?(approved?|request(?:ed)?\s+changes|changes\s+requested)\b[\s*_`]*(.*)$/i;
+/** Lines a CLI prints around the answer: Codex's role markers and token count. */
+const CLI_MARKER =
+  /^(?:codex|user|thinking|exec|tokens used\b.*|[\d,]+|-{3,})$/i;
+/** Lines of findings taken from before the verdict when nothing follows it. */
+const VERDICT_CONTEXT_LINES = 80;
+
+const trimBlank = (lines: string[]) => {
+  let start = 0;
+  let end = lines.length;
+  while (start < end && !lines[start].trim()) start++;
+  while (end > start && !lines[end - 1].trim()) end--;
+  return lines.slice(start, end);
+};
+
+/**
+ * Read a reviewer's verdict from its run output: the last line that starts with
+ * APPROVE or REQUEST CHANGES. Without a `Verdict:` label the keyword must be
+ * upper case, so prose like "Approve the PR once…" is not a verdict. Lines that
+ * also appear in `prompt` are skipped, because Codex echoes the prompt and the
+ * review instructions may contain such a line. Findings are what follows the
+ * verdict, or the block before it when nothing does.
+ */
+export function parseVerdict(
+  output: string,
+  prompt = "",
+): ParsedVerdict | undefined {
+  const lines = plainOutput(output)
+    .split("\n")
+    .map((line) => line.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ""));
+  const echoed = new Set(
+    prompt
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line || echoed.has(line)) continue;
+    const match = VERDICT_LINE.exec(line);
+    if (!match) continue;
+    const [, label, keyword, rest] = match;
+    if (!label && keyword !== keyword.toUpperCase()) continue;
+    const inline = rest.replace(/^[\s:.,;–—-]+/, "").replace(/[\s*_`]+$/, "");
+    const following = lines.slice(i + 1);
+    const stop = following.findIndex((l) => CLI_MARKER.test(l.trim()));
+    const after = trimBlank(stop < 0 ? following : following.slice(0, stop));
+    let summary = (inline ? [inline, ...after] : after).join("\n");
+    if (!summary.trim()) {
+      const before: string[] = [];
+      for (
+        let j = i - 1;
+        j >= 0 && before.length < VERDICT_CONTEXT_LINES;
+        j--
+      ) {
+        if (CLI_MARKER.test(lines[j].trim())) break;
+        before.unshift(lines[j]);
+      }
+      summary = trimBlank(before).join("\n");
+    }
+    summary = summary.trim();
+    if (summary.length > VERDICT_SUMMARY_MAX)
+      summary = `${summary.slice(0, VERDICT_SUMMARY_MAX - 1).trimEnd()}…`;
+    return {
+      decision: /^approve/i.test(keyword) ? "approve" : "changes",
+      summary,
+    };
+  }
+  return undefined;
+}
+
+export const VERDICT_LABELS: Record<Verdict["decision"], string> = {
+  approve: "Approved",
+  changes: "Changes requested",
+};
+
+/**
+ * Prefill for the Request changes form: the reviewer's findings, after any
+ * change request already pending so neither is lost.
+ */
+export function changeRequestFrom(
+  pending: string | undefined,
+  verdict: Pick<Verdict, "summary">,
+): string {
+  const current = pending?.trim();
+  const findings = verdict.summary.trim();
+  if (!current) return findings;
+  if (!findings || current.includes(findings)) return current;
+  return `${current}\n\n${findings}`;
 }

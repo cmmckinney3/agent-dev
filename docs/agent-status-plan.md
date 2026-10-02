@@ -233,3 +233,75 @@ read when _Working_ actually goes quiet.
 - Native, with Claude Code: a task run shows Working → Done; a permission prompt
   shows Needs you with its reason; a notification arrives with the window in
   the background.
+
+## 9. Phase 2 — runs that end in a verdict
+
+Status: implemented 2026-10-01 (see `docs/development-checkpoint.md`).
+
+**Changed while building:** once a verdict is read, the review card moves to
+Done (unless headless runs are set to "Leave in Running"). Its findings now live
+on the reviewed task, and leaving it in Review put two cards in the attention
+list for one decision. A re-run that started while the output was being read
+keeps the card.
+
+### Why
+
+Every reviewer prompt asks for a final `APPROVE` or `REQUEST CHANGES` line, but
+nothing reads it. When a review finishes, the owner opens its output, finds the
+verdict, and retypes the findings into **Request changes**. BridgeMind's Auto
+runs end in a Done/Stuck verdict; this is the same idea for Crucible's reviews.
+
+### Behaviour
+
+- When an agent-review task's run exits, Crucible reads the run's saved output
+  (`read_run`; the log is synced before `agent-exit` is emitted) and looks for
+  the verdict.
+- Found: the review task stores a `verdict` (`approve` or `changes`, plus the
+  reviewer's findings). The reviewed task gets the attention line "Agent review
+  approved" or "Agent review requested changes", and a toast offers to open it.
+- Not found (no line, truncated or unrecorded output): the review task's
+  attention says why, and nothing else changes.
+- The reviewed task's detail shows each review's verdict, and the latest
+  verdict's findings. **Use as change request** opens the existing Request
+  changes form prefilled with them (appended to any pending request). The owner
+  edits and chooses **Send back and re-run** or **Send back to backlog**, as
+  today. Nothing is sent automatically.
+- Cards: a review card's chip reads **Review · Approved** or **Review ·
+  Changes**.
+- Re-running a review task clears its old verdict; duplicating a task does not
+  copy one.
+
+### Parsing (`parseVerdict` in `src/review.ts`, pure)
+
+- `plainOutput` moves here from `RunReview.tsx` (escape codes stripped, carriage
+  returns as line breaks).
+- The verdict is the **last** line that starts — after Markdown decoration
+  (`#`, `>`, `*`, `_`, `-`, backticks) and an optional `Verdict:` label — with
+  `APPROVE`, `APPROVED`, `REQUEST CHANGES`, `REQUESTED CHANGES` or `CHANGES
+REQUESTED`. Without a `Verdict:` label the keyword must be upper case, so prose
+  such as "Approve the PR once…" is not a verdict.
+- Lines that also appear in the prompt are ignored: Codex echoes the prompt
+  into the log, and custom review instructions may contain such a line.
+- Findings are the rest of the verdict line plus the lines after it, with CLI
+  trailers (`tokens used` and its count) dropped. If nothing follows, they are
+  the block before the verdict, back to a CLI marker (`codex`, `user`, a token
+  count, a `---` rule) or 80 lines. Control characters are stripped and the text
+  is capped at `VERDICT_SUMMARY_MAX` (4000) characters.
+
+### Argv rule
+
+Review output reaches a prompt only through the Request changes form, where the
+owner sees and edits it, and capped. That keeps the rule in `review.ts` intact:
+no prompt is built automatically from agent output.
+
+### Data model
+
+- `Task.verdict?: { decision: "approve" | "changes"; summary: string; runId:
+string; at: number }`, normalized in `normalizeWorkspace` (dropped when
+  malformed, summary capped). No `STORAGE_KEY` bump: optional and additive.
+
+### Later (2b, not in this pass)
+
+An opt-in loop that sends a REQUEST CHANGES verdict back automatically, capped
+at N rounds. It needs the argv rule revisited, since no one would see the text
+before it is sent.

@@ -8,6 +8,60 @@ The resume list from the previous checkpoint (September 10) is complete except f
 the native desktop verification noted under "Still owed" below. Everything else in
 that list was either implemented or verified as already correct.
 
+## Review verdicts (October 1)
+
+Phase 2 of `docs/agent-status-plan.md` (section 9). Frontend only.
+
+- **Reading the verdict.** When an agent-review task's run exits, App reads the
+  run's saved output with `read_run` (the backend syncs the log before it emits
+  `agent-exit`) and runs `parseVerdict` (`src/review.ts`, pure). The verdict is
+  the last line starting with `APPROVE`/`APPROVED`/`REQUEST CHANGES`/`CHANGES
+REQUESTED` after Markdown decoration and an optional `Verdict:` label; without
+  the label the keyword must be upper case. Lines that also appear in the prompt
+  are skipped. Real `codex exec` 0.159.3 output was captured: in a terminal it
+  logs a header, `user` plus the **echoed prompt**, `codex` plus the answer,
+  `tokens used` and a count, then prints the answer again. Findings are the
+  lines after the verdict up to such a marker, or the block before it when
+  nothing follows; control characters stripped, capped at 4000.
+- **Recording it.** Found: the review stores `Task.verdict` (`approve` or
+  `changes`, findings, run id, time), loses its generic attention line and moves
+  to Done unless headless runs "stay"; the reviewed task gets "Agent review
+  approved" / "Agent review requested changes"; a toast opens it. Not found, or
+  recording off, or the read failed: the review's attention says why and a toast
+  opens the review. A re-run clears the verdict; Duplicate does not copy it.
+- **Using it.** The reviewed task's detail shows a verdict chip per review and
+  the latest verdict's findings. On REQUEST CHANGES, **Use as change request**
+  opens the existing Request changes form prefilled with them (after any pending
+  request, without repeating it) and focuses it. Nothing is sent until the user
+  chooses Send back. A review's own detail shows its verdict. Cards read
+  **Review · Approved** / **Review · Changes**.
+- `plainOutput` moved from `RunReview.tsx` to `review.ts` so the parser can be
+  tested. `Task.verdict` is optional and normalized (dropped when malformed,
+  findings capped); no `STORAGE_KEY` bump.
+
+**Verification**
+
+- `npm test` — **70 passed** (9 new in `tests/review.test.mjs`, including the
+  captured Codex output with its prompt echo and token footer).
+- `npm run build` — passes (strict `tsc`).
+- Driven in the vite dev server with the Tauri IPC mock: Ask for review spawned
+  Codex with the real reviewer prompt; its Codex-style log (echoed prompt,
+  verdict, footer, repeated answer) produced "Review of “Fix the flaky auth
+  test”: changes requested", the builder's "Agent review requested changes",
+  the review card in Done as **Review · Changes**, and findings of exactly the
+  two numbered items. **Use as change request** prefilled and focused the form;
+  **Send back and re-run** launched the builder with the original request,
+  `Changes requested after review:` and both findings. A reviewer with no verdict
+  left its card in Review with the reason; an `**Verdict: APPROVE**` reviewer
+  gave "approved", the builder's "Agent review approved", and no Use button.
+- Prettier 3.6.2 on every changed file that was clean before; `RunReview.tsx`
+  and `workspace.ts` were not, and only their new lines follow it.
+
+**Still owed (native)**
+
+- Ask for review with real Claude Code and Codex reviewers, and check the
+  verdict and findings against what each actually printed.
+
 ## Agent status, Dashboard and notifications (October 1)
 
 Direction: `docs/bridgemind-research.md` (the owner chose BridgeMind-style agent

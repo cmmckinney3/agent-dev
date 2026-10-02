@@ -6,7 +6,7 @@ import {
   paneIds,
 } from "./layout";
 import { Settings, normalizeSettings } from "./settings";
-import { Task, TaskDraft } from "./tasks";
+import { Task, TaskDraft, VERDICT_SUMMARY_MAX, Verdict } from "./tasks";
 import { RunRecord, normalizeRuns } from "./usage";
 
 export const STORAGE_KEY = "agentdev.workspace.v7";
@@ -55,6 +55,22 @@ const str = (v: unknown, fallback = "") =>
   typeof v === "string" ? v : fallback;
 const finite = (v: unknown, fallback: number) =>
   typeof v === "number" && Number.isFinite(v) ? v : fallback;
+/** A stored review verdict, or nothing when any part of it is malformed. */
+const verdictOf = (v: unknown): Verdict | undefined => {
+  const o = object(v);
+  return (o.decision === "approve" || o.decision === "changes") &&
+    typeof o.summary === "string" &&
+    typeof o.runId === "string" &&
+    typeof o.at === "number" &&
+    Number.isFinite(o.at)
+    ? {
+        decision: o.decision,
+        summary: o.summary.slice(0, VERDICT_SUMMARY_MAX),
+        runId: o.runId,
+        at: o.at,
+      }
+    : undefined;
+};
 const stringMap = (v: unknown) =>
   Object.fromEntries(
     Object.entries(object(v)).filter(
@@ -255,6 +271,7 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
             ? t.changeRequest
             : undefined,
         reviewOf: typeof t.reviewOf === "string" ? t.reviewOf : undefined,
+        verdict: verdictOf(t.verdict),
       };
     });
   for (const t of tasks) {

@@ -1031,6 +1031,37 @@ kbd {
 .outcome.done {
   color: #7dd3a5;
 }
+/* Agent-review verdicts: approved reads like a clean run, changes like a warning. */
+.outcome.verdict-approve {
+  color: #7dd3a5;
+  border-color: #294c3c;
+  background: #15271e;
+}
+.outcome.verdict-changes {
+  color: #e7b17e;
+  border-color: #55432b;
+  background: #292219;
+  text-transform: none;
+}
+.task-item-meta .verdict-chip.approve {
+  color: #7dd3a5;
+}
+.task-item-meta .verdict-chip.changes {
+  color: #e7b17e;
+}
+.verdict-block {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.verdict-block .detail-actions {
+  margin: 0 0 8px;
+}
+.verdict-block .request-view {
+  margin: 0;
+}
 .request-view {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

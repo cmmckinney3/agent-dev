@@ -4,6 +4,19 @@
 export type TaskStatus = "backlog" | "running" | "review" | "done";
 export type TaskMode = "interactive" | "headless";
 
+/** Longest reviewer findings kept; they can prefill a change request. */
+export const VERDICT_SUMMARY_MAX = 4000;
+
+/** What an agent reviewer concluded, read from the last line of its output. */
+export interface Verdict {
+  decision: "approve" | "changes";
+  /** The reviewer's findings, plain text, capped at VERDICT_SUMMARY_MAX. */
+  summary: string;
+  /** The review run it was read from. */
+  runId: string;
+  at: number;
+}
+
 export interface Task {
   /** Stable, non-time-based id (`task-N`) so behavior is testable. */
   id: string;
@@ -43,6 +56,8 @@ export interface Task {
   changeRequest?: string;
   /** On an agent-review task: the id of the task whose work it reviews. */
   reviewOf?: string;
+  /** On an agent-review task: the verdict read from its last run. */
+  verdict?: Verdict;
 }
 
 /** The fields a user edits in the composer; the rest are managed by App. */

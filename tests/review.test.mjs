@@ -51,7 +51,13 @@ const {
   reviewsOf,
   REVIEW_FILE_LIMIT,
   REVIEW_PATH_LIMIT,
+  parseVerdict,
+  plainOutput,
+  changeRequestFrom,
 } = await import(pathToFileURL(join(temp, "review.mjs")));
+const { VERDICT_SUMMARY_MAX } = await import(
+  pathToFileURL(join(temp, "tasks.mjs"))
+);
 after(() => {
   if (
     resolve(temp).startsWith(resolve(tmpdir()) + "\\") ||
@@ -497,5 +503,166 @@ test("review instructions default when missing or not a string, and are capped",
     normalizeWorkspace({ agents: [], settings: { reviewInstructions: "" } })
       .settings.reviewInstructions,
     "",
+  );
+});
+
+// ---- Verdicts -------------------------------------------------------------
+
+test("verdict: a plain Claude-style answer with findings after the line", () => {
+  const output = [
+    "The change fixes the clock but the regression test is missing.",
+    "",
+    "REQUEST CHANGES",
+    "1. Add a test for the cancelled tier.",
+    "",
+    "2. Rename `t` to `tier`.",
+  ].join("\n");
+  assert.deepEqual(parseVerdict(output), {
+    decision: "changes",
+    summary:
+      "1. Add a test for the cancelled tier.\n\n2. Rename `t` to `tier`.",
+  });
+});
+
+test("verdict: Markdown decoration, a Verdict label and an inline reason", () => {
+  assert.deepEqual(
+    parseVerdict("## Review\nok\n\n**Verdict: APPROVE** — clean and tested."),
+    {
+      decision: "approve",
+      summary: "clean and tested.",
+    },
+  );
+  assert.deepEqual(parseVerdict("Verdict: request changes: add a test"), {
+    decision: "changes",
+    summary: "add a test",
+  });
+  assert.equal(parseVerdict("> APPROVED").decision, "approve");
+  assert.equal(
+    parseVerdict("- CHANGES REQUESTED\n- fix it").decision,
+    "changes",
+  );
+  assert.equal(parseVerdict("### Final verdict: Approve").decision, "approve");
+});
+
+test("verdict: prose that merely starts with the word is not a verdict", () => {
+  assert.equal(parseVerdict("Approve the PR once the tests pass."), undefined);
+  assert.equal(
+    parseVerdict("Request changes from the author if needed."),
+    undefined,
+  );
+  assert.equal(parseVerdict("I would APPROVE this."), undefined);
+  assert.equal(parseVerdict("APPROVES nothing"), undefined);
+  assert.equal(parseVerdict(""), undefined);
+});
+
+test("verdict: the last verdict line wins", () => {
+  const output =
+    "REQUEST CHANGES\n- fix it\n\nUpdated after rerunning tests.\nAPPROVE";
+  assert.equal(parseVerdict(output).decision, "approve");
+});
+
+test("verdict: real Codex exec output, prompt echo and token footer included", () => {
+  const prompt =
+    "Review the work.\nREQUEST CHANGES if anything fails.\nFinish with a verdict line, APPROVE or REQUEST CHANGES.";
+  const output = [
+    "OpenAI Codex v0.159.3",
+    "--------",
+    "workdir: C:\Demo",
+    "--------",
+    "user",
+    "Review the work.",
+    "REQUEST CHANGES if anything fails.",
+    "Finish with a verdict line, APPROVE or REQUEST CHANGES.",
+    "codex",
+    "Finding: A test is missing.",
+    "REQUEST CHANGES",
+    "- add a test",
+    "tokens used",
+    "7,189",
+    "Finding: A test is missing.",
+    "REQUEST CHANGES",
+    "- add a test",
+  ].join("\r\n");
+  assert.deepEqual(parseVerdict(output, prompt), {
+    decision: "changes",
+    summary: "- add a test",
+  });
+  // The stderr copy alone: findings stop at the footer.
+  const stderrOnly = output.split("\r\n").slice(0, 14).join("\n");
+  assert.deepEqual(parseVerdict(stderrOnly, prompt), {
+    decision: "changes",
+    summary: "- add a test",
+  });
+  // A bare verdict at the very end borrows the block before it, back to a marker.
+  const bare = [...output.split("\r\n").slice(0, 12), "REQUEST CHANGES"].join(
+    "\n",
+  );
+  assert.deepEqual(parseVerdict(bare, prompt), {
+    decision: "changes",
+    summary: "Finding: A test is missing.\nREQUEST CHANGES\n- add a test",
+  });
+  // Without the prompt, its echoed line would have looked like a verdict.
+  const echoOnly = output.split("\r\n").slice(0, 8).join("\n");
+  assert.equal(parseVerdict(echoOnly, prompt), undefined);
+  assert.equal(parseVerdict(echoOnly).decision, "changes");
+});
+
+test("verdict: terminal escapes are stripped and findings are capped", () => {
+  const colored =
+    "\x1b[1m\x1b[32mAPPROVE\x1b[0m\r\n\x1b]0;title\x07Looks good.\x07";
+  assert.deepEqual(parseVerdict(colored), {
+    decision: "approve",
+    summary: "Looks good.",
+  });
+  const long = parseVerdict(
+    `REQUEST CHANGES\n${"x".repeat(VERDICT_SUMMARY_MAX * 2)}`,
+  );
+  assert.equal(long.summary.length, VERDICT_SUMMARY_MAX);
+  assert.ok(long.summary.endsWith("…"));
+  assert.equal(plainOutput("a\rb\r\nc\x1b[2Kd"), "a\nb\ncd");
+});
+
+test("verdict: a bare APPROVE with nothing around it has empty findings", () => {
+  assert.deepEqual(parseVerdict("APPROVE"), {
+    decision: "approve",
+    summary: "",
+  });
+});
+
+test("change request prefill keeps a pending request and avoids repeats", () => {
+  const verdict = { summary: "- add a test" };
+  assert.equal(changeRequestFrom(undefined, verdict), "- add a test");
+  assert.equal(changeRequestFrom("  ", verdict), "- add a test");
+  assert.equal(
+    changeRequestFrom("Use the fixed clock", verdict),
+    "Use the fixed clock\n\n- add a test",
+  );
+  assert.equal(
+    changeRequestFrom("Use the fixed clock\n\n- add a test", verdict),
+    "Use the fixed clock\n\n- add a test",
+  );
+  assert.equal(changeRequestFrom("Keep this", { summary: "" }), "Keep this");
+});
+
+test("stored verdicts normalize; malformed ones are dropped and long ones capped", () => {
+  const verdict = {
+    decision: "changes",
+    summary: "fix",
+    runId: "run-1",
+    at: 5,
+  };
+  const load = (v) =>
+    normalizeWorkspace({ agents: [], tasks: [task("t", { verdict: v })] })
+      .tasks[0].verdict;
+  assert.deepEqual(load(verdict), verdict);
+  assert.equal(load({ ...verdict, decision: "maybe" }), undefined);
+  assert.equal(load({ ...verdict, runId: 3 }), undefined);
+  assert.equal(load({ ...verdict, at: Number.NaN }), undefined);
+  assert.equal(load("APPROVE"), undefined);
+  assert.equal(load(undefined), undefined);
+  assert.equal(
+    load({ ...verdict, summary: "y".repeat(VERDICT_SUMMARY_MAX + 10) }).summary
+      .length,
+    VERDICT_SUMMARY_MAX,
   );
 });

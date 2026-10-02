@@ -43,7 +43,10 @@ Built with **Tauri (Rust) + React + TypeScript + xterm.js**.
   the work is correct.
 - **Agent review & change requests** — hand a finished task to a second agent for
   a read-only review, or send **Request changes** feedback that the task's next
-  run receives along with the original request.
+  run receives along with the original request. When a review finishes, its
+  `APPROVE` / `REQUEST CHANGES` verdict is read from the output and shown on the
+  reviewed task; **Use as change request** puts the reviewer's findings into the
+  Request changes form for you to edit and send.
 - **Agent status & Dashboard** — every running pane says what its agent is
   doing: _Working_, _Needs you_ (blocked on an approval prompt, a bell or an OSC 9
   request, with the question shown), _Done_ (finished a turn you have not looked
