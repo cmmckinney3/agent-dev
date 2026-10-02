@@ -43,6 +43,10 @@ phase 1.
   motion). Docked at 300px from 1100px wide; below that it floats over the panes
   and closes when a row is opened. `dashboardOpen` persists (no `STORAGE_KEY`
   bump; additive boolean like `boardCollapsed`).
+- **Version 0.4.0** in `tauri.conf.json`, `Cargo.toml`, `package.json` and both
+  lockfiles, so the next MSI upgrades an installed 0.3.0 in place. `upgradeCode`
+  and `identifier` are unchanged. The notification plugin moved Tauri itself from
+  2.11 to 2.12 (Rust crate and `@tauri-apps/api` together).
 - **Notifications.** `tauri-plugin-notification` (Rust crate, JS package,
   `notification:default` capability). Settings → Workspace → **Desktop
   notifications**: when Crucible is in the background (default), always, or off.
