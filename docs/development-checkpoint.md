@@ -1,4 +1,4 @@
-# Development checkpoint — September 29, 2026
+# Development checkpoint — October 1, 2026
 
 **Development only: do not replace, install over, or modify the installed Crucible
 app.** Resume this working tree; do not reset it. Many files were already modified
@@ -7,6 +7,82 @@ before this implementation.
 The resume list from the previous checkpoint (September 10) is complete except for
 the native desktop verification noted under "Still owed" below. Everything else in
 that list was either implemented or verified as already correct.
+
+## Agent status, Dashboard and notifications (October 1)
+
+Direction: `docs/bridgemind-research.md` (the owner chose BridgeMind-style agent
+status and a Dashboard, then verdicts, teammates with memory and messaging).
+Plan, and what changed while building: `docs/agent-status-plan.md`. This is
+phase 1.
+
+- **Activity model** (`src/activity.ts`, pure). A running session is _Working_,
+  _Needs you_, _Done_ or _Idle_, inferred from the PTY stream so it works for any
+  CLI. Output within 400 ms of the user's input or a resize is an echo/redraw;
+  other output starts Working when a turn is pending (a seeded task prompt, or a
+  line submitted with Enter) or after 300 ms of closely spaced chunks. Working
+  ends after 2 s of quiet (10 s before the first output). The last ten screen
+  lines, with box borders stripped and soft wraps joined, are then checked for an
+  approval prompt: a match is Needs you with the question as the reason;
+  otherwise Done if a turn was pending, else Idle. OSC 9 and BEL (not one right
+  after a keystroke) go straight to Needs you. Focus and mouse reports are not
+  the user answering. Process exit is Done (with the exit code) until seen; a
+  stop the user asked for is Idle.
+- **Sessions.** `sessions.ts` feeds the model and publishes only real
+  transitions (`subscribeActivity`), never per output chunk. App drives
+  `tickActivity()` once a second; the module still holds no timers. `markSeen`
+  runs on pane focus/click and Dashboard open. `Launch.seeded` is set by
+  `startTask` only.
+- **Pane header.** The status chip says Working / Needs you / Done / Idle while
+  the process runs (the reason is its tooltip) and the process state otherwise.
+- **Dashboard** (`src/Dashboard.tsx`): header button with a Needs-you count
+  badge, `Ctrl Shift D` (reserved in the terminal key handler too) and a palette
+  action. Four count tiles, then sections across **all** projects, a row per
+  session with agent accent, task title or session name, agent · project, the
+  reason, and status with time in state. A row switches project, focuses and
+  marks the pane seen, and flashes a ring around it (steady under reduced
+  motion). Docked at 300px from 1100px wide; below that it floats over the panes
+  and closes when a row is opened. `dashboardOpen` persists (no `STORAGE_KEY`
+  bump; additive boolean like `boardCollapsed`).
+- **Notifications.** `tauri-plugin-notification` (Rust crate, JS package,
+  `notification:default` capability). Settings → Workspace → **Desktop
+  notifications**: when Crucible is in the background (default), always, or off.
+  Sent on transitions to Needs you or Done; the body is agent · project and the
+  reason only. Permission is requested on first use; failures are swallowed
+  (`src/desktopNotify.ts`). Taskbar attention on run completion is unchanged.
+
+**Verification**
+
+- `npm test` — **61 passed** (15 new in `tests/activity.test.mjs`, one session
+  lifecycle test of activity through the real registry, one normalization test).
+  The approval-prompt patterns are pinned against wording found in the installed
+  Claude Code 2.1.284 and Codex 0.159.3 binaries.
+- `npm run build` — passes (strict `tsc`); only the existing chunk-size note.
+- `cd src-tauri && cargo test --offline` — **13 passed on Windows**, including
+  the Windows-gated PTY and DPAPI tests that the September 29 pass could not run.
+- Driven in the vite dev server with Tauri's own IPC mock (`mockIPC` with mocked
+  events and `mockWindows`) standing in for the native side, so real xterm
+  terminals received scripted agent output: a Claude-style permission box became
+  Needs you with "Do you want to proceed?"; streaming Codex output stayed
+  Working; a seeded task and a submitted follow-up ended Done; an exit read
+  "Process exited" and a user stop "Stopped" (Idle). The Dashboard grouped all of
+  them across two projects; a row switched project, focused the terminal and
+  flashed the pane; Tab reaches rows with the focus ring; `Ctrl Shift D`
+  toggles; at 900×600 there is no horizontal overflow and the floating Dashboard
+  leaves the panes 604px. With notifications on Always, an OSC 9 request produced
+  "Needs you: Session 2" / "Codex · crucible / Codex needs approval to run git
+  push"; on "in the background" with the window focused, nothing was sent.
+- Prettier 3.6.2 on every changed file that was clean before. `sessions.ts`,
+  `icons.tsx`, `workspace.ts` and `SettingsPage.tsx` were not clean before and
+  were left unformatted apart from the new lines.
+
+**Still owed (native)**
+
+- Run Claude Code and Codex in the real app: a task should go Working → Done, a
+  permission prompt Needs you with its question, and a desktop notification
+  should arrive with Crucible in the background (first use asks permission).
+- Watch for false states with real TUIs: any periodic redraw while idle that
+  reads as Working, or an approval prompt worded unlike `WAITING_PATTERNS`.
+- Phase 1b (Claude Code hooks) and phases 2–3 are in the plan, not built.
 
 ## Review loop (September 29)
 

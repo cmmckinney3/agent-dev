@@ -8,10 +8,11 @@ import ts from 'typescript';
 const temp=mkdtempSync(join(tmpdir(),'crucible-session-tests-'));
 after(()=>{if(resolve(temp).startsWith(resolve(tmpdir())+'\\')||resolve(temp).startsWith(resolve(tmpdir())+'/'))rmSync(temp,{recursive:true});});
 writeFileSync(join(temp,'native.mjs'),`export const bridge={calls:[],handlers:{},invoke:async()=>{}};export const invoke=(name,args)=>{bridge.calls.push({name,args});return bridge.invoke(name,args)};export const isTauri=()=>true;export const listen=async(name,handler)=>{bridge.handlers[name]=handler;return ()=>delete bridge.handlers[name]};export const openUrl=async()=>{};
-export class Terminal {options={};cols=80;rows=24;parser={registerOscHandler(){}};output=[];loadAddon(){}onData(fn){this.input=fn}attachCustomKeyEventHandler(){}reset(){this.output=[]}write(t){this.output.push(t)}writeln(t){this.output.push(t)}focus(){}dispose(){this.disposed=true}}
+export class Terminal {options={};cols=80;rows=24;parser={registerOscHandler(code,fn){this.osc=fn}};output=[];screen=[];buffer={active:{baseY:0,getLine:i=>i<this.screen.length?{translateToString:()=>this.screen[i],isWrapped:false}:undefined}};loadAddon(){}onData(fn){this.input=fn}onBell(fn){this.bell=fn}attachCustomKeyEventHandler(){}reset(){this.output=[]}write(t){this.output.push(t)}writeln(t){this.output.push(t)}focus(){}dispose(){this.disposed=true}}
 export class FitAddon{fit(){}}export class SearchAddon{}export class WebLinksAddon{}`);
-const source=readFileSync(new URL('../src/sessions.ts',import.meta.url),'utf8');
-const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022}}).outputText.replace(/from "[^"]+"/g,'from "./native.mjs"');writeFileSync(join(temp,'sessions.mjs'),code);
+const transpile=name=>ts.transpileModule(readFileSync(new URL(`../src/${name}.ts`,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022}}).outputText;
+writeFileSync(join(temp,'activity.mjs'),transpile('activity'));
+const code=transpile('sessions').replace(/from "\.\/activity"/g,'from "./activity.mjs"').replace(/from "(?!\.\/activity\.mjs)[^"]+"/g,'from "./native.mjs"');writeFileSync(join(temp,'sessions.mjs'),code);
 const {bridge}=await import(pathToFileURL(join(temp,'native.mjs')));
 const settings={fontSize:13,fontFamily:'',cursorStyle:'block',cursorBlink:true,scrollback:1000,recordUsage:true};
 let sequence=0;
@@ -31,4 +32,20 @@ test('delivery failures reject and disabled recording reaches the native command
 });
 test('failed launches report one completion with a useful error',async()=>{
  const api=await setup();const events=[];api.subscribeSessions(e=>events.push(e));bridge.invoke=async()=>{throw Error('executable missing')};assert.equal(await api.startSession('pane',launch(),settings),false);assert.equal(api.sessionState('pane'),'failed');assert.equal(events.filter(e=>e.completed).length,1);assert.match(events.at(-1).error,/executable missing/);
+});
+test('activity follows a seeded run through work, a prompt, completion and a stop',async()=>{
+ const api=await setup();const changes=[];api.subscribeActivity((id,a)=>changes.push(a?.activity));
+ await api.startSession('pane',{...launch(),seeded:true},settings);assert.equal(api.sessionActivity('pane').activity,'working');
+ const term=api.getSession('pane',settings).term;const t0=Date.now();
+ for(let i=0;i<5;i++)bridge.handlers['agent-output']({payload:{id:'pane',run_id:'run-one',data:btoa('x')}});
+ assert.deepEqual(changes,['working'],'output chunks are not transitions');
+ term.screen=['Do you want to proceed?','❯ 1. Yes','  2. No'];term.rows=3;
+ api.tickActivity(t0+60000);assert.equal(api.sessionActivity('pane').activity,'waiting');assert.equal(api.sessionActivity('pane').reason,'Do you want to proceed?');
+ term.input('1');assert.equal(api.sessionActivity('pane').activity,'idle');
+ term.parser.osc('Claude needs your permission');assert.equal(api.sessionActivity('pane').reason,'Claude needs your permission');
+ bridge.handlers['agent-exit']({payload:{id:'pane',run_id:'run-one',code:3}});assert.equal(api.sessionActivity('pane').activity,'done');assert.equal(api.sessionActivity('pane').reason,'Exited with code 3');
+ api.markSeen('pane');assert.equal(api.sessionActivity('pane').activity,'idle');
+ await api.startSession('pane',launch('run-two'),settings);assert.equal(api.sessionActivity('pane').activity,'idle','an unseeded launch starts idle');
+ await api.stopSession('pane');assert.equal(api.sessionActivity('pane').reason,'Stopped');assert.equal(api.sessionActivity('pane').activity,'idle');
+ api.disposeSession('pane');assert.equal(api.sessionActivity('pane'),undefined);assert.equal(changes.at(-1),undefined);
 });

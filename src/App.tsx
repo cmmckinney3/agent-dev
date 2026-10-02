@@ -11,6 +11,9 @@ import Modal from "./Modal";
 import CommandPalette, { PaletteAction } from "./CommandPalette";
 import RunReview, { ReviewData } from "./RunReview";
 import SplitDivider from "./SplitDivider";
+import Dashboard, { DashboardRow } from "./Dashboard";
+import { ACTIVITY_LABELS, ActivityState } from "./activity";
+import { notifyDesktop } from "./desktopNotify";
 import {
   AgentDraft,
   enabledAgents,
@@ -54,12 +57,15 @@ import {
   disposeSession,
   focusSession,
   isBusy,
+  markSeen,
   sendSession,
   sessionRun,
   sessionState,
   startSession,
   stopSession,
+  subscribeActivity,
   subscribeSessions,
+  tickActivity,
 } from "./sessions";
 import {
   basename,
@@ -86,6 +92,7 @@ import {
   BotIcon,
   BroadcastIcon,
   CrucibleIcon,
+  DashboardIcon,
   FolderIcon,
   PlayIcon,
   PlusIcon,
@@ -101,6 +108,10 @@ import "./Premium.css";
 const UsagePage = lazy(() => import("./UsagePage"));
 const SettingsPage = lazy(() => import("./SettingsPage"));
 type Page = "workspace" | "activity" | "settings";
+/** Width of the Dashboard column beside the panes. */
+const DASHBOARD_WIDTH = 300;
+/** Below this window width the Dashboard floats over the panes instead. */
+const DASHBOARD_DOCK_MIN = 1100;
 interface ProjectInfo {
   name: string;
   cwd: string;
@@ -128,7 +139,10 @@ export default function App({
   latest.current = w;
   const [page, setPage] = useState<Page>("workspace");
   const [statuses, setStatuses] = useState<Record<string, AgentStatus>>({});
+  const [activity, setActivity] = useState<Record<string, ActivityState>>({});
   const [activePane, setActivePane] = useState("");
+  /** A pane opened from the Dashboard; `n` restarts the ring animation. */
+  const [flash, setFlash] = useState<{ id: string; n: number }>();
   const [expanded, setExpanded] = useState<string>();
   const [agentManager, setAgentManager] = useState(false);
   const [palette, setPalette] = useState(false);
@@ -175,7 +189,13 @@ export default function App({
   const order = paneIds(project.layout);
   // The rail is sized in pixels, so in a narrow window its own maximum has to
   // shrink or the panes it sits next to become unusably thin.
-  const railMax = Math.max(240, Math.min(480, viewport - 560));
+  // A docked Dashboard takes its width from the panes; in a narrow window it
+  // floats over them instead, so the panes never shrink below usable.
+  const dashboardDocked = w.dashboardOpen && viewport >= DASHBOARD_DOCK_MIN;
+  const railMax = Math.max(
+    240,
+    Math.min(480, viewport - 560 - (dashboardDocked ? DASHBOARD_WIDTH : 0)),
+  );
   const clampRail = (width: number) => Math.max(240, Math.min(railMax, width));
   const allSlots = w.projects.flatMap((p) => paneIds(p.layout));
   const available = enabledAgents(w.agents);
@@ -391,6 +411,43 @@ export default function App({
     [],
   );
 
+  useEffect(() => {
+    const unsubscribe = subscribeActivity((id, state) => {
+      setActivity((prev) => {
+        const next = { ...prev };
+        if (state) next[id] = state;
+        else delete next[id];
+        return next;
+      });
+      // Done stays until the pane is clicked or typed in: every launch focuses
+      // its terminal, so "the active pane" is no proof anyone saw it finish.
+      if (!state || (state.activity !== "waiting" && state.activity !== "done"))
+        return;
+      const mode = latest.current.settings.desktopNotifications;
+      if (mode === "off" || (mode === "background" && document.hasFocus()))
+        return;
+      const p = slotProject(id);
+      const run = sessionRun(id);
+      const name = run?.taskTitle || p?.slotNames[id] || "Session";
+      void notifyDesktop(
+        `${ACTIVITY_LABELS[state.activity]}: ${name}`,
+        [[run?.agentName, p?.name].filter(Boolean).join(" · "), state.reason]
+          .filter(Boolean)
+          .join("\n"),
+      );
+    });
+    const timer = window.setInterval(() => tickActivity(), 1000);
+    return () => {
+      unsubscribe();
+      window.clearInterval(timer);
+    };
+  }, []);
+  useEffect(() => {
+    if (!flash) return;
+    const timer = setTimeout(() => setFlash(undefined), 1600);
+    return () => clearTimeout(timer);
+  }, [flash]);
+
   const slotProject = (id: string) =>
     latest.current.projects.find((p) => paneIds(p.layout).includes(id));
   const slotTitle = (id: string) => slotProject(id)?.slotNames[id] || "Session";
@@ -417,6 +474,31 @@ export default function App({
     setExpanded(undefined);
     setActivePane("");
     setPage("workspace");
+  };
+  /** Bring a pane into view from the Dashboard, without focus mode. */
+  const openPane = (id: string) => {
+    const p = slotProject(id);
+    if (!p) return;
+    if (p.id !== latest.current.activeProjectId) switchProject(p.id);
+    else {
+      setPage("workspace");
+      if (expanded && expanded !== id) setExpanded(undefined);
+    }
+    setActivePane(id);
+    setDetail(undefined);
+    setRunDetail(undefined);
+    markSeen(id);
+    setFlash({ id, n: Date.now() });
+    // A floating Dashboard covers the panes; get out of the way of the one asked for.
+    if (window.innerWidth < DASHBOARD_DOCK_MIN)
+      change((v) => ({ ...v, dashboardOpen: false }));
+    requestAnimationFrame(() => focusSession(id));
+  };
+  const toggleDashboard = () => {
+    if (page !== "workspace") {
+      setPage("workspace");
+      change((v) => ({ ...v, dashboardOpen: true }));
+    } else change((v) => ({ ...v, dashboardOpen: !v.dashboardOpen }));
   };
   const stop = async (id: string) => {
     try {
@@ -601,6 +683,7 @@ export default function App({
           args: seedArgs(a, launchPrompt(task), task.mode, state.settings),
           env: launchEnv(a, state.settings),
           run,
+          seeded: true,
         },
         state.settings,
       );
@@ -1137,20 +1220,23 @@ export default function App({
     newTask,
     toggleFocus: () =>
       setExpanded(expanded ? undefined : activePane || order[0]),
+    toggleDashboard,
   });
   keysRef.current = {
     newTask,
     toggleFocus: () =>
       setExpanded(expanded ? undefined : activePane || order[0]),
+    toggleDashboard,
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey) return;
       const key = e.key.toLowerCase();
       if (document.querySelector('[role="dialog"]') && key !== "p") return;
-      if (!["p", "n", "b", "e"].includes(key)) return;
+      if (!["p", "n", "b", "e", "d"].includes(key)) return;
       e.preventDefault();
       if (key === "p") setPalette((v) => !v);
+      if (key === "d") keysRef.current.toggleDashboard();
       if (key === "n") keysRef.current.newTask();
       if (key === "b") setBroadcastOpen((v) => !v);
       if (key === "e") keysRef.current.toggleFocus();
@@ -1238,6 +1324,13 @@ export default function App({
       run: () => setExpanded(expanded ? undefined : activePane || order[0]),
     },
     {
+      id: "dashboard",
+      label: w.dashboardOpen ? "Close dashboard" : "Open dashboard",
+      detail: "Every agent, grouped by what it is doing",
+      shortcut: "Ctrl+Shift+D",
+      run: toggleDashboard,
+    },
+    {
       id: "broadcast",
       label: "Toggle broadcast composer",
       shortcut: "Ctrl+Shift+B",
@@ -1280,6 +1373,29 @@ export default function App({
     c.panes.some((p) => p.id === focused),
   )?.id;
   const pct = (a: number, b: number) => Math.round((a / (a + b)) * 100);
+  const dashboardRows: DashboardRow[] = w.projects.flatMap((p) =>
+    paneIds(p.layout).flatMap((id) => {
+      const state = activity[id];
+      if (!state) return [];
+      const run = sessionRun(id);
+      const agent = w.agents.find(
+        (a) => a.id === (run?.agentId ?? p.slotAgents[id]),
+      );
+      return [
+        {
+          id,
+          title: run?.taskTitle || p.slotNames[id] || "Session",
+          agent: agent?.name ?? run?.agentName ?? "Agent",
+          accent: agent?.accent ?? "var(--text-dim)",
+          project: p.name,
+          activity: state,
+        },
+      ];
+    }),
+  );
+  const waitingCount = dashboardRows.filter(
+    (r) => r.activity.activity === "waiting",
+  ).length;
 
   return (
     <div className="app premium-app">
@@ -1345,6 +1461,18 @@ export default function App({
           <SearchIcon />
           <span>Search</span>
           <kbd>Ctrl Shift P</kbd>
+        </button>
+        <button
+          className="dashboard-toggle"
+          onClick={toggleDashboard}
+          aria-pressed={page === "workspace" && w.dashboardOpen}
+          aria-controls="dashboard-panel"
+          aria-label={`Dashboard${waitingCount ? `, ${waitingCount} need you` : ""}`}
+          title="Dashboard (Ctrl+Shift+D)"
+        >
+          <DashboardIcon />
+          {waitingCount > 0 && <b>{waitingCount}</b>}
+          <span>Dashboard</span>
         </button>
         <button
           ref={attentionTrigger}
@@ -1551,6 +1679,7 @@ export default function App({
             style={
               {
                 "--board-width": `${Math.min(w.boardWidth, railMax)}px`,
+                "--dashboard-width": `${DASHBOARD_WIDTH}px`,
               } as React.CSSProperties
             }
           >
@@ -1683,6 +1812,10 @@ export default function App({
                               size={pane.size}
                               expanded={focused === pane.id}
                               active={activePane === pane.id}
+                              activity={activity[pane.id]}
+                              flash={
+                                flash?.id === pane.id ? flash.n : undefined
+                              }
                               canClose={order.length > 1}
                               canSplit={order.length < MAX_PANES}
                               blocked={
@@ -1703,7 +1836,10 @@ export default function App({
                                   expanded === pane.id ? undefined : pane.id,
                                 )
                               }
-                              onActive={() => setActivePane(pane.id)}
+                              onActive={() => {
+                                setActivePane(pane.id);
+                                markSeen(pane.id);
+                              }}
                               onAgent={(id) =>
                                 patchProject(project.id, (p) => ({
                                   ...p,
@@ -1764,6 +1900,14 @@ export default function App({
                 </Fragment>
               ))}
             </main>
+            {w.dashboardOpen && (
+              <Dashboard
+                floating={!dashboardDocked}
+                rows={dashboardRows}
+                onOpen={openPane}
+                onClose={() => change((v) => ({ ...v, dashboardOpen: false }))}
+              />
+            )}
           </div>
           <footer
             className={`desktop-statusbar ${broadcastOpen ? "expanded" : ""}`}

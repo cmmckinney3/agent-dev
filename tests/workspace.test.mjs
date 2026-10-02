@@ -100,3 +100,13 @@ test('a task blocked by dependencies is queueable rather than unrunnable',()=>{
   assert.equal(taskBlocker(tasks[1],tasks),undefined);
   assert.deepEqual(queueCandidates(tasks).map(t=>t.id),['blocked']);
 });
+test('dashboard state and desktop notifications normalize with safe defaults', async () => {
+  const { normalizeSettings } = await import(pathToFileURL(join(temp, 'settings.mjs')));
+  assert.equal(normalizeWorkspace({}).dashboardOpen, false);
+  assert.equal(normalizeWorkspace({ dashboardOpen: true }).dashboardOpen, true);
+  assert.equal(normalizeWorkspace({ dashboardOpen: 'yes' }).dashboardOpen, false);
+  assert.equal(normalizeSettings({}).desktopNotifications, 'background');
+  assert.equal(normalizeSettings({ desktopNotifications: 'always' }).desktopNotifications, 'always');
+  assert.equal(normalizeSettings({ desktopNotifications: 'off' }).desktopNotifications, 'off');
+  assert.equal(normalizeSettings({ desktopNotifications: 'loud' }).desktopNotifications, 'background');
+});

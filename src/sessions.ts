@@ -7,6 +7,20 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Settings } from "./settings";
 import { RunRecord } from "./usage";
+import {
+  ActivityState,
+  activityChanged,
+  initialActivity,
+  onAttention,
+  onBell,
+  onExit,
+  onInput,
+  onOutput,
+  onResize,
+  onSeen,
+  onTick,
+  SCREEN_LINES,
+} from "./activity";
 
 export type AgentStatus =
   | "idle"
@@ -35,6 +49,8 @@ export interface Launch {
   args: string[];
   env: Record<string, string>;
   run: RunRecord;
+  /** The launch carries a prompt, so the agent starts working on a turn. */
+  seeded?: boolean;
 }
 export interface Session {
   id: string;
@@ -45,12 +61,17 @@ export interface Session {
   run?: RunRecord;
   error?: string;
   hasOutput: boolean;
+  /** What the agent is doing; kept after exit so a finished run reads as Done. */
+  activity?: ActivityState;
   showSearch?: () => void;
   launching?: Promise<boolean>;
   stopping?: Promise<void>;
 }
 const sessions = new Map<string, Session>();
 const listeners = new Set<(event: SessionEvent) => void>();
+const activityListeners = new Set<
+  (id: string, activity: ActivityState | undefined) => void
+>();
 let bridgeReady: Promise<void> | undefined;
 const publish = (session: Session, extra: Partial<SessionEvent> = {}) => {
   const event = {
@@ -69,6 +90,59 @@ export function subscribeSessions(
   return () => {
     listeners.delete(fn);
   };
+}
+/** Store a session's activity, telling listeners only about real transitions. */
+const setActivity = (s: Session, next: ActivityState | undefined) => {
+  const previous = s.activity;
+  s.activity = next;
+  if (next === previous) return;
+  if (next && previous && !activityChanged(previous, next)) return;
+  for (const listener of activityListeners) listener(s.id, next);
+};
+const touch = (s: Session, fn: (a: ActivityState) => ActivityState) => {
+  if (s.activity) setActivity(s, fn(s.activity));
+};
+export function subscribeActivity(
+  fn: (id: string, activity: ActivityState | undefined) => void,
+): () => void {
+  activityListeners.add(fn);
+  return () => {
+    activityListeners.delete(fn);
+  };
+}
+export function sessionActivity(id: string): ActivityState | undefined {
+  return sessions.get(id)?.activity;
+}
+/** The last non-empty screen lines, with soft-wrapped rows joined back up. */
+export function screenTail(term: Terminal, count = SCREEN_LINES): string[] {
+  const buffer = term.buffer.active;
+  const lines: string[] = [];
+  let row = buffer.baseY + term.rows - 1;
+  while (row >= buffer.baseY && lines.length < count) {
+    let text = "";
+    for (;;) {
+      const line = buffer.getLine(row);
+      text = (line?.translateToString(true) ?? "") + text;
+      row--;
+      if (!line?.isWrapped || row < buffer.baseY) break;
+    }
+    if (text.trim()) lines.unshift(text);
+  }
+  return lines;
+}
+/**
+ * Advance every live session's activity clock. App calls this about once a
+ * second, so this module holds no timers of its own.
+ */
+export function tickActivity(now = Date.now()) {
+  for (const s of sessions.values())
+    if (s.status === "running")
+      touch(s, (a) => onTick(a, now, () => screenTail(s.term)));
+}
+/** The user looked at this pane. */
+export function markSeen(id: string, now = Date.now()) {
+  const s = sessions.get(id);
+  if (s) touch(s, (a) => onSeen(a, now));
 }
 export function sessionState(id: string): AgentStatus {
   return sessions.get(id)?.status ?? "idle";
@@ -98,6 +172,7 @@ function ensureBridge() {
               const binary = atob(e.payload.data);
               const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
               s.term.write(bytes);
+              touch(s, (a) => onOutput(a, Date.now()));
             },
           ),
         );
@@ -108,6 +183,15 @@ function ensureBridge() {
               const s = sessions.get(e.payload.id);
               if (!s || s.run?.id !== e.payload.run_id) return;
               s.status = "exited";
+              touch(s, (a) =>
+                onExit(
+                  a,
+                  Date.now(),
+                  e.payload.code
+                    ? `Exited with code ${e.payload.code}`
+                    : "Process exited",
+                ),
+              );
               s.term.writeln(
                 `\r\n\x1b[90m[Process exited${e.payload.code == null ? "" : ` · code ${e.payload.code}`}]\x1b[0m`,
               );
@@ -166,6 +250,7 @@ export function getSession(id: string, settings: Settings): Session {
   };
   sessions.set(id, s);
   term.onData((data) => {
+    if (s.status === "running") touch(s, (a) => onInput(a, Date.now(), data));
     if (s.status === "running")
       void sendSession(id, data).catch((error) => {
         s.error = `Input could not be delivered: ${String(error)}`;
@@ -185,17 +270,24 @@ export function getSession(id: string, settings: Settings): Session {
     if (
       (e.ctrlKey || e.metaKey) &&
       e.shiftKey &&
-      ["p", "n", "b", "e"].includes(e.key.toLowerCase())
+      ["p", "n", "b", "e", "d"].includes(e.key.toLowerCase())
     )
       return false;
     return true;
   });
   term.parser.registerOscHandler(9, (message) => {
-    if (s.status === "running")
+    if (s.status === "running") {
+      touch(s, (a) =>
+        onAttention(a, Date.now(), message || "Agent requested attention"),
+      );
       publish(s, {
         attention: message.slice(0, 300) || "Agent requested attention",
       });
+    }
     return true;
+  });
+  term.onBell(() => {
+    if (s.status === "running") touch(s, (a) => onBell(a, Date.now()));
   });
   return s;
 }
@@ -207,6 +299,8 @@ export function fitSession(s: Session) {
   )
     return;
   s.fit.fit();
+  // The agent redraws after a resize; that output is not work.
+  touch(s, (a) => onResize(a, Date.now()));
   if (isTauri() && isBusy(s.status))
     void invoke("resize_agent", {
       id: s.id,
@@ -224,6 +318,7 @@ export async function startSession(
   s.status = "starting";
   s.error = undefined;
   s.run = launch.run;
+  setActivity(s, initialActivity(Date.now(), Boolean(launch.seeded)));
   publish(s);
   const launching = (async () => { try {
     await ensureBridge();
@@ -254,6 +349,7 @@ export async function startSession(
     s.status = "failed";
     s.error = String(error);
     s.hasOutput = true;
+    touch(s, (a) => onExit(a, Date.now(), "Could not start"));
     s.term.writeln(`\r\n\x1b[31m[Could not start: ${s.error}]\x1b[0m`);
     publish(s, {completed:true});
     return false;
@@ -274,6 +370,7 @@ export async function stopSession(id: string): Promise<void> {
   const stopping = (async () => { try {
     await invoke("kill_agent", { id });
     s.status = "stopped";
+    touch(s, (a) => onExit(a, Date.now(), "Stopped", true));
     publish(s, {completed:true});
   } catch (error) {
     s.status = previous;
@@ -295,6 +392,7 @@ export function focusSession(id: string) {
 export function disposeSession(id: string) {
   const s = sessions.get(id);
   if (s && !isBusy(s.status)) {
+    setActivity(s, undefined);
     s.term.dispose();
     sessions.delete(id);
   }

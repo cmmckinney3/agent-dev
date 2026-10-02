@@ -44,6 +44,14 @@ Built with **Tauri (Rust) + React + TypeScript + xterm.js**.
 - **Agent review & change requests** — hand a finished task to a second agent for
   a read-only review, or send **Request changes** feedback that the task's next
   run receives along with the original request.
+- **Agent status & Dashboard** — every running pane says what its agent is
+  doing: _Working_, _Needs you_ (blocked on an approval prompt, a bell or an OSC 9
+  request, with the question shown), _Done_ (finished a turn you have not looked
+  at) or _Idle_. The **Dashboard** (`Ctrl Shift D`) lists every session in every
+  project grouped that way, with time in state; click one to jump to it. Desktop
+  notifications for _Needs you_ and _Done_ are on while Crucible is in the
+  background. Detection reads the terminal stream, so it works for any CLI, but
+  it is a heuristic: a prompt worded unlike any known one shows as Done or Idle.
 - **Command palette** — `Ctrl Shift P` for projects, tasks, sessions and actions.
 - **Activity page** — searchable, paginated run history. Run counts and outcomes
   only; it is not token, cost or quota tracking.
@@ -159,8 +167,10 @@ real behaviour:
   a finished headless run does (Review / Done on exit 0 / stay put), whether
   deleting a card asks first, and the review instructions appended to every
   agent-review prompt (blank uses the built-in checklist).
-- **Workspace** — whether **Stop all** asks first, and whether a broadcast
-  presses Enter or just types the text into each pane.
+- **Workspace** — taskbar attention when a run finishes, desktop
+  notifications (off, while Crucible is in the background, or always), whether
+  **Stop all** asks first, and whether a broadcast presses Enter or just types
+  the text into each pane.
 - **History & data** — record runs or not, how many to keep, clear the history,
   copy the whole workspace as a JSON backup, restore one, or reset everything.
 
@@ -210,6 +220,10 @@ wix-upgrade-code` prints both the derived and the pinned value.
   React, so they survive page changes, project switches and remounts.
 - `src/AgentPane.tsx` — the view for one pane: mounts its terminal, renders the
   header, find bar and overflow menu.
+- `src/activity.ts` / `src/Dashboard.tsx` — the pure agent-activity model
+  (Working / Needs you / Done / Idle, inferred from the terminal stream) and the
+  Dashboard that groups every session by it. `src/desktopNotify.ts` sends the
+  desktop notifications.
 - `src/storage.ts` / `src/workspace.ts` — the persistence funnel (debounced,
   serialized, failures always surfaced with a retry) and the `Workspace` model
   whose `normalizeWorkspace()` validates every untrusted blob before it can
@@ -239,4 +253,6 @@ wix-upgrade-code` prints both the derived and the pinned value.
 
 - Real orchestration, still open: a coordinator that creates and assigns cards,
   and a mailbox/shared feed between agents. The builder/reviewer handoff now
-  exists as [Agent review](#task-board).
+  exists as [Agent review](#task-board), and per-agent status (the Dashboard)
+  is the groundwork messaging needs. Direction and research:
+  `docs/bridgemind-research.md`; next phases: `docs/agent-status-plan.md`.

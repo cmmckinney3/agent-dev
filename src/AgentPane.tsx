@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { AgentConfig } from "./agents";
 import { Settings } from "./settings";
+import { ACTIVITY_LABELS, ActivityState } from "./activity";
 import { PaneDropPlacement, PaneMoveDirection } from "./layout";
 import {
   configureSession,
@@ -39,6 +40,10 @@ interface Props {
   size: number;
   expanded: boolean;
   active: boolean;
+  /** What the agent is doing, while its process runs. */
+  activity?: ActivityState;
+  /** Set when opened from the Dashboard; a new value replays the ring. */
+  flash?: number;
   canClose: boolean;
   canSplit: boolean;
   blocked?: string;
@@ -87,6 +92,8 @@ export default function AgentPane(p: Props) {
   const [search, setSearch] = useState(false);
   const [query, setQuery] = useState("");
   const live = isBusy(status);
+  // While the process runs, say what the agent is doing rather than "Running".
+  const doing = status === "running" ? p.activity : undefined;
   useEffect(() => {
     const s = getSession(p.id, p.settings);
     const host = container.current!;
@@ -236,9 +243,12 @@ export default function AgentPane(p: Props) {
               {p.title}
             </button>
           )}
-          <span className={`session-status ${status}`}>
+          <span
+            className={`session-status ${doing ? `activity-${doing.activity}` : status}`}
+            title={doing?.reason}
+          >
             <span />
-            {labels[status]}
+            {doing ? ACTIVITY_LABELS[doing.activity] : labels[status]}
           </span>
           <button
             className="icon-button"
@@ -500,6 +510,9 @@ export default function AgentPane(p: Props) {
           </div>
         )}
       </div>
+      {p.flash !== undefined && (
+        <span key={p.flash} className="pane-flash" aria-hidden="true" />
+      )}
     </section>
   );
 }

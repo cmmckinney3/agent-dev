@@ -15,6 +15,9 @@ export type HeadlessCompletion =
 
 export type CursorStyle = "block" | "bar" | "underline";
 
+/** When an agent that needs you, or finishes, raises a desktop notification. */
+export type DesktopNotifications = "off" | "background" | "always";
+
 /**
  * Credentials/routing for OpenRouter-backed agents. An agent opts in with
  * `provider: "openrouter"`; the tokens below are then substituted into its
@@ -32,6 +35,7 @@ export interface OpenRouterSettings {
 
 export interface Settings {
   notifyOnCompletion: boolean;
+  desktopNotifications: DesktopNotifications;
   // ---- Terminal ----
   /** xterm font size in px. */
   fontSize: number;
@@ -89,6 +93,7 @@ export const DEFAULT_REVIEW_INSTRUCTIONS = [
 
 export const DEFAULT_SETTINGS: Settings = {
   notifyOnCompletion: true,
+  desktopNotifications: "background",
   fontSize: 13,
   fontFamily: "",
   scrollback: 10000,
@@ -127,6 +132,15 @@ export const CURSOR_STYLES: { id: CursorStyle; label: string }[] = [
   { id: "block", label: "Block" },
   { id: "bar", label: "Bar" },
   { id: "underline", label: "Underline" },
+];
+
+export const DESKTOP_NOTIFICATIONS: {
+  id: DesktopNotifications;
+  label: string;
+}[] = [
+  { id: "background", label: "When Crucible is in the background" },
+  { id: "always", label: "Always" },
+  { id: "off", label: "Off" },
 ];
 
 export const HEADLESS_COMPLETIONS: {
@@ -171,6 +185,11 @@ export function normalizeSettings(raw: unknown): Settings {
   const or = (r.openRouter ?? {}) as Record<string, unknown>;
   return {
     notifyOnCompletion: bool(r.notifyOnCompletion, d.notifyOnCompletion),
+    desktopNotifications: DESKTOP_NOTIFICATIONS.some(
+      (n) => n.id === r.desktopNotifications,
+    )
+      ? (r.desktopNotifications as DesktopNotifications)
+      : d.desktopNotifications,
     fontSize: num(
       r.fontSize,
       d.fontSize,

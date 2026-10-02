@@ -103,7 +103,23 @@ failing the whole load. Portable backups are redacted by default.
 - `src/sessions.ts` — the session registry described above: `startSession`,
   `stopSession`, `sendSession`, `focusSession`, `disposeSession`, `sessionState`,
   `sessionRun`, `subscribeSessions`. Pure enough to unit-test against a stubbed
-  native bridge, and where every terminal-lifecycle rule belongs.
+  native bridge, and where every terminal-lifecycle rule belongs. It also feeds
+  each session's **activity** (`subscribeActivity`, `sessionActivity`,
+  `markSeen`, `tickActivity`): output, input, resizes, OSC 9 and the bell go into
+  `activity.ts`, and listeners hear only real transitions. App drives
+  `tickActivity` once a second, so the module holds no timers.
+- `src/activity.ts` — pure model of what the agent inside a terminal is doing:
+  _Working_, _Needs you_ (OSC 9, a bell, or an approval prompt on screen — see
+  `WAITING_PATTERNS`), _Done_ (a turn the user started finished and has not been
+  seen), _Idle_. Inferred from the PTY stream only, so it works for any CLI.
+  Echoes of the user's typing and redraws after a resize never count as work.
+  Done stays until the pane is clicked or typed in: every launch focuses its
+  terminal, so the active pane is no proof anyone watched it finish.
+- `src/Dashboard.tsx` — the Dashboard panel: count tiles and every session in
+  every project grouped by activity, with time in state. Docked beside the panes
+  from 1100px wide, floating over them below that. `src/desktopNotify.ts` sends
+  the matching desktop notifications through `tauri-plugin-notification`
+  (best effort; `settings.desktopNotifications` decides when).
 - `src/AgentPane.tsx` — the view for one pane: it mounts the terminal owned by
   `sessions.ts`, renders the 68px two-row header, the find bar, and the overflow
   menu (which flips above the trigger when a short window leaves no room below).
@@ -214,6 +230,10 @@ keys. That path only works while the identifier stays the same.
 
 - `docs/task-board-plan.md` — original board/scheduling design rationale.
 - `docs/premium-experience-audit.md` — the review this rework was built from.
+- `docs/agent-status-plan.md` — the agent status, Dashboard and notifications
+  plan (phase 1 built; phases 1b–3 listed).
+- `docs/bridgemind-research.md` — what BridgeMind (the inspiration) ships as of
+  October 2026, the gap with Crucible, and the direction chosen from it.
 - `docs/development-checkpoint.md` — running record of what is implemented and
   verified, and what still needs a desktop check. Keep it current.
 

@@ -17,6 +17,8 @@ import {
   CURSOR_STYLES,
   CursorStyle,
   DEFAULT_REVIEW_INSTRUCTIONS,
+  DESKTOP_NOTIFICATIONS,
+  DesktopNotifications,
   FONT_SIZE_RANGE,
   HEADLESS_COMPLETIONS,
   HeadlessCompletion,
@@ -770,6 +772,28 @@ export default function SettingsPage({
           hint="Guard rails on the actions that reach every pane at once."
         >
           <Row label="Notify when work finishes" hint="Draw attention to Crucible in the Windows taskbar when a run finishes or fails."><Toggle checked={settings.notifyOnCompletion} label="Notify when work finishes" onChange={notifyOnCompletion=>onChange({notifyOnCompletion})}/></Row>
+          <Row
+            label="Desktop notifications"
+            hint="A notification when an agent needs you or finishes a turn. The Dashboard shows the same status either way."
+            htmlFor="set-desktop-notifications"
+          >
+            <select
+              id="set-desktop-notifications"
+              className="set-input"
+              value={settings.desktopNotifications}
+              onChange={(e) =>
+                onChange({
+                  desktopNotifications: e.target.value as DesktopNotifications,
+                })
+              }
+            >
+              {DESKTOP_NOTIFICATIONS.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.label}
+                </option>
+              ))}
+            </select>
+          </Row>
           <Row
             label="Confirm “Stop all”"
             hint="Killing every session asks once first."

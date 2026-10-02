@@ -43,6 +43,8 @@ export interface Workspace {
   targets: Record<string, boolean>;
   boardCollapsed: boolean;
   boardWidth: number;
+  /** The agent Dashboard beside the panes is open. */
+  dashboardOpen: boolean;
   templates: PromptTemplate[];
 }
 const object = (v: unknown): Record<string, unknown> =>
@@ -278,6 +280,7 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
     ),
     boardCollapsed: r.boardCollapsed === true,
     boardWidth: Math.max(240, Math.min(480, finite(r.boardWidth, 292))),
+    dashboardOpen: r.dashboardOpen === true,
     templates: (Array.isArray(r.templates) ? r.templates : [])
       .filter(
         (t) =>

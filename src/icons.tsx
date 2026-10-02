@@ -264,3 +264,12 @@ export const DatabaseIcon = (p: IconProps) => (
     <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3" />
   </Base>
 );
+
+export const DashboardIcon = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3" y="3" width="7" height="9" rx="1" />
+    <rect x="14" y="3" width="7" height="5" rx="1" />
+    <rect x="14" y="12" width="7" height="9" rx="1" />
+    <rect x="3" y="16" width="7" height="5" rx="1" />
+  </Base>
+);
