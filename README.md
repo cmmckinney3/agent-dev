@@ -47,6 +47,12 @@ Built with **Tauri (Rust) + React + TypeScript + xterm.js**.
   `APPROVE` / `REQUEST CHANGES` verdict is read from the output and shown on the
   reviewed task; **Use as change request** puts the reviewer's findings into the
   Request changes form for you to edit and send.
+- **Teammates** — saved, named agents with a brief and a memory of their own.
+  Pick one under "Who does it" when you create a task: the run is told who it is
+  and where its memory file is, reads it before it starts and adds what it
+  learns, and Crucible folds the notes back in when the run ends. Memory belongs
+  to the teammate, not the project, so lessons from one project reach the next.
+  Read, edit or clear it on the **Teammates** page.
 - **Agent status & Dashboard** — every running pane says what its agent is
   doing: _Working_, _Needs you_ (blocked on an approval prompt, a bell or an OSC 9
   request, with the question shown), _Done_ (finished a turn you have not looked
@@ -223,6 +229,10 @@ wix-upgrade-code` prints both the derived and the pinned value.
   React, so they survive page changes, project switches and remounts.
 - `src/AgentPane.tsx` — the view for one pane: mounts its terminal, renders the
   header, find bar and overflow menu.
+- `src/teammates.ts` / `src/TeammatesPage.tsx` — the pure teammate model
+  (prompt preface, memory file name, the merge of a run's notes) and the
+  Teammates page. `seed_memory` / `collect_memory` in `desktop.rs` move the memory
+  file into a run's folder and back.
 - `src/activity.ts` / `src/Dashboard.tsx` — the pure agent-activity model
   (Working / Needs you / Done / Idle, inferred from the terminal stream) and the
   Dashboard that groups every session by it. `src/desktopNotify.ts` sends the

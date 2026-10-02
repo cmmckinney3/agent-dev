@@ -58,6 +58,8 @@ export interface Task {
   reviewOf?: string;
   /** On an agent-review task: the verdict read from its last run. */
   verdict?: Verdict;
+  /** The teammate doing the task; its engine overrides `agentId` at launch. */
+  teammateId?: string;
 }
 
 /** The fields a user edits in the composer; the rest are managed by App. */
@@ -70,6 +72,7 @@ export interface TaskDraft {
   priority?: Task["priority"];
   dependencies?: string[];
   isolation?: boolean;
+  teammateId?: string;
 }
 
 /** Board columns, left-to-right, with the order used by the ◀ ▶ move buttons. */
@@ -114,5 +117,6 @@ export function draftFromTask(source: Task | TaskDraft): TaskDraft {
     priority: source.priority ?? "normal",
     dependencies: [...(source.dependencies ?? [])],
     isolation: source.isolation ?? false,
+    teammateId: source.teammateId,
   };
 }

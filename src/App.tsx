@@ -15,6 +15,12 @@ import Dashboard, { DashboardRow } from "./Dashboard";
 import { ACTIVITY_LABELS, ActivityState } from "./activity";
 import { notifyDesktop } from "./desktopNotify";
 import {
+  Teammate,
+  memoryFileName,
+  mergeMemory,
+  teammatePrompt,
+} from "./teammates";
+import {
   AgentDraft,
   enabledAgents,
   launchBlockReason,
@@ -103,6 +109,7 @@ import {
   SendIcon,
   SettingsIcon,
   StopIcon,
+  TeammatesIcon,
   TerminalIcon,
   CloseIcon,
 } from "./icons";
@@ -110,7 +117,8 @@ import "./App.css";
 import "./Premium.css";
 const UsagePage = lazy(() => import("./UsagePage"));
 const SettingsPage = lazy(() => import("./SettingsPage"));
-type Page = "workspace" | "activity" | "settings";
+const TeammatesPage = lazy(() => import("./TeammatesPage"));
+type Page = "workspace" | "teammates" | "activity" | "settings";
 /** Width of the Dashboard column beside the panes. */
 const DASHBOARD_WIDTH = 300;
 /** Below this window width the Dashboard floats over the panes instead. */
@@ -146,6 +154,18 @@ export default function App({
   const [activePane, setActivePane] = useState("");
   /** A pane opened from the Dashboard; `n` restarts the ring animation. */
   const [flash, setFlash] = useState<{ id: string; n: number }>();
+  /** The teammate the Teammates page should show, when opened from elsewhere. */
+  const [teammateFocus, setTeammateFocus] = useState<string>();
+  /**
+   * Memory written into a teammate run's folder, by run id: what was seeded,
+   * so the merge after the run can tell the teammate's edits from the owner's.
+   */
+  const memorySeeds = useRef(
+    new Map<
+      string,
+      { teammateId: string; cwd: string; file: string; seeded: string }
+    >(),
+  );
   const [expanded, setExpanded] = useState<string>();
   const [agentManager, setAgentManager] = useState(false);
   const [palette, setPalette] = useState(false);
@@ -412,6 +432,8 @@ export default function App({
           // The output log is synced before agent-exit is sent, so it is
           // complete by now.
           if (event.status === "exited") void readVerdict(event.run);
+          // A stopped run may still have learned something; collect either way.
+          void collectMemory(event.run.id);
         }
       }),
     [],
@@ -520,6 +542,52 @@ export default function App({
     else if (problem) notify(problem, () => showTask(review.id), "Open review");
   };
 
+  const openTeammate = (id?: string) => {
+    setTeammateFocus(id);
+    setPage("teammates");
+    setDetail(undefined);
+    setRunDetail(undefined);
+  };
+  /**
+   * A teammate's run ended: read its memory file back and fold it into the
+   * stored memory (see mergeMemory for how edits on both sides are kept).
+   */
+  const collectMemory = async (runId: string) => {
+    const seed = memorySeeds.current.get(runId);
+    if (!seed) return;
+    memorySeeds.current.delete(runId);
+    let returned: string | null = null;
+    try {
+      returned = await invoke<string | null>("collect_memory", {
+        cwd: seed.cwd,
+        file: seed.file,
+      });
+    } catch (e) {
+      const name = latest.current.teammates.find(
+        (t) => t.id === seed.teammateId,
+      )?.name;
+      notify(`Could not read ${name ?? "the teammate"}'s memory: ${String(e)}`);
+      return;
+    }
+    const mate = latest.current.teammates.find((t) => t.id === seed.teammateId);
+    if (!mate) return;
+    const merged = mergeMemory(seed.seeded, mate.memory, returned);
+    if (!merged.changed) return;
+    change((v) => ({
+      ...v,
+      teammates: v.teammates.map((t) =>
+        t.id === mate.id
+          ? { ...t, memory: merged.memory, memoryUpdatedAt: Date.now() }
+          : t,
+      ),
+    }));
+    notify(
+      `${mate.name}'s memory was updated${merged.trimmed ? "; the oldest notes were dropped to fit" : ""}.`,
+      () => openTeammate(mate.id),
+      "View memory",
+    );
+  };
+
   const slotProject = (id: string) =>
     latest.current.projects.find((p) => paneIds(p.layout).includes(id));
   const slotTitle = (id: string) => slotProject(id)?.slotNames[id] || "Session";
@@ -596,6 +664,7 @@ export default function App({
     agentId: string,
     cwd: string,
     task?: Task,
+    extra: Partial<RunRecord> = {},
   ): RunRecord => {
     const a = latest.current.agents.find((a) => a.id === agentId)!;
     return {
@@ -614,6 +683,7 @@ export default function App({
       mode: task?.mode,
       startedAt: Date.now(),
       outcome: "running",
+      ...extra,
     };
   };
   const recordRun = (run: RunRecord) => {
@@ -677,7 +747,14 @@ export default function App({
     const task = state.tasks.find((t) => t.id === id);
     if (!task || task.archived || task.paneId) return;
     const p = state.projects.find((p) => p.id === task.projectId);
-    const a = state.agents.find((a) => a.id === task.agentId);
+    // A teammate's engine wins over the task's, so changing the teammate's
+    // engine moves all of its tasks with it.
+    const mate = task.teammateId
+      ? state.teammates.find((t) => t.id === task.teammateId)
+      : undefined;
+    const a = state.agents.find(
+      (a) => a.id === (mate?.agentId ?? task.agentId),
+    );
     if (!p || !a) return;
     const blocked = launchBlockReason(a, state.settings);
     if (blocked) {
@@ -742,7 +819,25 @@ export default function App({
           });
         return;
       }
-      const run = createRun(slot, a.id, cwd, task);
+      let prompt = launchPrompt(task);
+      let seed: { file: string; seeded: string } | undefined;
+      if (mate) {
+        // The memory goes into a file in the run's folder, never into argv;
+        // the prompt only says where it is.
+        const file = memoryFileName(mate);
+        await invoke("seed_memory", { cwd, file, content: mate.memory });
+        seed = { file, seeded: mate.memory };
+        prompt = teammatePrompt(mate, prompt);
+      }
+      const run = createRun(
+        slot,
+        a.id,
+        cwd,
+        task,
+        mate ? { prompt, teammateId: mate.id, teammateName: mate.name } : {},
+      );
+      if (mate && seed)
+        memorySeeds.current.set(run.id, { teammateId: mate.id, cwd, ...seed });
       recordRun(run);
       patchProject(p.id, (value) => ({
         ...value,
@@ -753,7 +848,7 @@ export default function App({
         {
           program: a.program,
           cwd,
-          args: seedArgs(a, launchPrompt(task), task.mode, state.settings),
+          args: seedArgs(a, prompt, task.mode, state.settings),
           env: launchEnv(a, state.settings),
           run,
           seeded: true,
@@ -1352,6 +1447,56 @@ export default function App({
       tasks: v.tasks.map((t) =>
         t.agentId === id ? { ...t, agentId: fallback.id } : t,
       ),
+      teammates: v.teammates.map((t) =>
+        t.agentId === id ? { ...t, agentId: fallback.id } : t,
+      ),
+    }));
+  };
+  const addTeammate = (): string => {
+    const taken = new Set(latest.current.teammates.map((t) => t.name));
+    let name = "New teammate";
+    for (let n = 2; taken.has(name); n++) name = `New teammate ${n}`;
+    const mate: Teammate = {
+      id: newId("teammate"),
+      name,
+      agentId: available[0].id,
+      brief: "",
+      memory: "",
+      createdAt: Date.now(),
+    };
+    change((v) => ({ ...v, teammates: [...v.teammates, mate] }));
+    return mate.id;
+  };
+  const updateTeammate = (id: string, patch: Partial<Teammate>) =>
+    change((v) => ({
+      ...v,
+      teammates: v.teammates.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              ...patch,
+              ...("memory" in patch && { memoryUpdatedAt: Date.now() }),
+            }
+          : t,
+      ),
+    }));
+  const deleteTeammate = async (id: string) => {
+    const mate = latest.current.teammates.find((t) => t.id === id);
+    if (!mate) return;
+    if (
+      isTauri() &&
+      !(await confirm(
+        `Delete ${mate.name} and its memory? Tasks it was assigned keep their engine.`,
+        { title: "Delete teammate", kind: "warning" },
+      ))
+    )
+      return;
+    change((v) => ({
+      ...v,
+      teammates: v.teammates.filter((t) => t.id !== id),
+      tasks: v.tasks.map((t) =>
+        t.teammateId === id ? { ...t, teammateId: undefined } : t,
+      ),
     }));
   };
   const saveAgent = (draft: AgentDraft, id?: string) =>
@@ -1410,6 +1555,18 @@ export default function App({
       shortcut: "Ctrl+Shift+B",
       run: () => setBroadcastOpen((v) => !v),
     },
+    {
+      id: "teammates",
+      label: "Open teammates",
+      detail: "Saved agents with a brief and their own memory",
+      run: () => openTeammate(),
+    },
+    ...w.teammates.map((t) => ({
+      id: t.id,
+      label: t.name,
+      detail: `Teammate · ${w.agents.find((a) => a.id === t.agentId)?.name ?? "engine missing"}`,
+      run: () => openTeammate(t.id),
+    })),
     { id: "activity", label: "Open activity", run: () => setPage("activity") },
     { id: "settings", label: "Open settings", run: () => setPage("settings") },
     { id: "agents", label: "Manage agents", run: () => setAgentManager(true) },
@@ -1459,7 +1616,7 @@ export default function App({
         {
           id,
           title: run?.taskTitle || p.slotNames[id] || "Session",
-          agent: agent?.name ?? run?.agentName ?? "Agent",
+          agent: run?.teammateName ?? agent?.name ?? run?.agentName ?? "Agent",
           accent: agent?.accent ?? "var(--text-dim)",
           project: p.name,
           activity: state,
@@ -1508,23 +1665,27 @@ export default function App({
           </button>
         </div>
         <nav className="main-nav" aria-label="Pages">
-          {(["workspace", "activity", "settings"] as const).map((p) => (
-            <button
-              key={p}
-              className={page === p ? "selected" : ""}
-              aria-current={page === p ? "page" : undefined}
-              onClick={() => setPage(p)}
-            >
-              {p === "workspace" ? (
-                <TerminalIcon />
-              ) : p === "activity" ? (
-                <ActivityIcon />
-              ) : (
-                <SettingsIcon />
-              )}
-              {p[0].toUpperCase() + p.slice(1)}
-            </button>
-          ))}
+          {(["workspace", "teammates", "activity", "settings"] as const).map(
+            (p) => (
+              <button
+                key={p}
+                className={page === p ? "selected" : ""}
+                aria-current={page === p ? "page" : undefined}
+                onClick={() => setPage(p)}
+              >
+                {p === "workspace" ? (
+                  <TerminalIcon />
+                ) : p === "teammates" ? (
+                  <TeammatesIcon />
+                ) : p === "activity" ? (
+                  <ActivityIcon />
+                ) : (
+                  <SettingsIcon />
+                )}
+                {p[0].toUpperCase() + p.slice(1)}
+              </button>
+            ),
+          )}
         </nav>
         <span className="spacer" />
         <button
@@ -1761,6 +1922,7 @@ export default function App({
               tasks={currentTasks}
               allTasks={w.tasks}
               agents={w.agents}
+              teammates={w.teammates}
               collapsed={w.boardCollapsed}
               onCollapse={() =>
                 change((v) => ({ ...v, boardCollapsed: !v.boardCollapsed }))
@@ -2100,6 +2262,19 @@ export default function App({
         </>
       )}
       <Suspense fallback={<p className="empty-small">Opening page…</p>}>
+        {page === "teammates" && (
+          <TeammatesPage
+            teammates={w.teammates}
+            agents={w.agents}
+            tasks={w.tasks}
+            runs={w.usage}
+            focus={teammateFocus}
+            onAdd={addTeammate}
+            onUpdate={updateTeammate}
+            onDelete={(id) => void deleteTeammate(id)}
+            onOpenTask={showTask}
+          />
+        )}
         {page === "activity" && (
           <UsagePage
             runs={w.usage}
@@ -2174,6 +2349,7 @@ export default function App({
           key={composer.key}
           task={w.tasks.find((t) => t.id === composer.id)}
           agents={available}
+          teammates={w.teammates}
           cwd={
             (
               w.projects.find(
@@ -2248,6 +2424,8 @@ export default function App({
             if (rerun) void startTask(selectedTask.id);
           }}
           onOpenTask={showTask}
+          teammate={w.teammates.find((t) => t.id === selectedTask.teammateId)}
+          onOpenTeammate={openTeammate}
           onArchive={() => archiveTask(selectedTask)}
           onDuplicate={() => duplicateTask(selectedTask)}
           onFocus={() =>

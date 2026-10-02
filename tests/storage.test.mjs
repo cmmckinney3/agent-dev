@@ -26,6 +26,7 @@ for (const name of [
   "settings",
   "tasks",
   "usage",
+  "teammates",
 ]) {
   const source = readFileSync(
     new URL(`../src/${name}.ts`, import.meta.url),

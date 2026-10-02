@@ -1474,6 +1474,143 @@ kbd {
 .usage-footnote {
   font-size: 11px;
 }
+/* ---- Teammates page: list on the left, the selected teammate on the right ---- */
+.teammates-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 18px;
+  margin-top: 22px;
+  align-items: start;
+}
+.teammate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.teammate-list button {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.teammate-list button:hover,
+.teammate-list button.selected {
+  background: var(--surface-2);
+}
+.teammate-list button.selected {
+  box-shadow: inset 2px 0 0 var(--blue);
+}
+.teammate-mark {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  flex-shrink: 0;
+  border-radius: 2px;
+  background: var(--text-dim);
+}
+.teammate-list-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.teammate-list-text strong,
+.teammate-list-text small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.teammate-list-text strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.teammate-list-text small {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.teammate-editor {
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.teammate-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 14px;
+}
+.teammate-fields label,
+.teammate-block {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-bottom: 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.teammate-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.teammate-label small {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.teammates-page input,
+.teammates-page textarea,
+.teammates-page select {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+}
+.teammates-page textarea {
+  resize: vertical;
+  line-height: 1.6;
+}
+.teammates-page input[aria-invalid="true"] {
+  border-color: #8f4b49;
+}
+.memory-editor {
+  font-family: var(--mono);
+  font-size: 12px;
+  min-height: 180px;
+}
+.teammate-block h3 {
+  margin: 4px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+.teammate-block .muted {
+  margin: 0;
+}
+.teammate-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+.teammates-page .activity-empty p {
+  max-width: 520px;
+  margin: 10px auto 18px;
+  line-height: 1.6;
+}
 .settings-page {
   min-height: 0;
 }

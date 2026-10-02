@@ -7,6 +7,7 @@ import {
 } from "./layout";
 import { Settings, normalizeSettings } from "./settings";
 import { Task, TaskDraft, VERDICT_SUMMARY_MAX, Verdict } from "./tasks";
+import { Teammate, normalizeTeammates } from "./teammates";
 import { RunRecord, normalizeRuns } from "./usage";
 
 export const STORAGE_KEY = "agentdev.workspace.v7";
@@ -46,6 +47,8 @@ export interface Workspace {
   /** The agent Dashboard beside the panes is open. */
   dashboardOpen: boolean;
   templates: PromptTemplate[];
+  /** Saved, named agents with a brief and their own memory. */
+  teammates: Teammate[];
 }
 const object = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v)
@@ -117,7 +120,14 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
       (!("projects" in r) && !("layout" in r) && !("agents" in r))
     )
       throw new Error("Choose a Crucible workspace backup.");
-    for (const field of ["projects", "tasks", "agents", "usage", "templates"]) {
+    for (const field of [
+      "projects",
+      "tasks",
+      "agents",
+      "usage",
+      "templates",
+      "teammates",
+    ]) {
       if (r[field] !== undefined && !Array.isArray(r[field]))
         throw new Error(`Backup field “${field}” must be a list.`);
     }
@@ -142,6 +152,8 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
     }
   }
   const agents = normalizeAgents(r.agents);
+  const teammates = normalizeTeammates(r.teammates, agents);
+  const teammateIds = new Set(teammates.map((t) => t.id));
   const available = agents.filter((a) => a.enabled);
   const agentId = (id: unknown) =>
     available.some((a) => a.id === id) ? (id as string) : available[0].id;
@@ -272,6 +284,10 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
             : undefined,
         reviewOf: typeof t.reviewOf === "string" ? t.reviewOf : undefined,
         verdict: verdictOf(t.verdict),
+        teammateId:
+          typeof t.teammateId === "string" && teammateIds.has(t.teammateId)
+            ? t.teammateId
+            : undefined,
       };
     });
   for (const t of tasks) {
@@ -298,6 +314,7 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
     boardCollapsed: r.boardCollapsed === true,
     boardWidth: Math.max(240, Math.min(480, finite(r.boardWidth, 292))),
     dashboardOpen: r.dashboardOpen === true,
+    teammates,
     templates: (Array.isArray(r.templates) ? r.templates : [])
       .filter(
         (t) =>

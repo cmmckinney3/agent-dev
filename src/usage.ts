@@ -40,6 +40,9 @@ export interface RunRecord {
   prompt?: string;
   error?: string;
   resumeId?: string;
+  /** Set when a teammate did the run; the name is a snapshot, like agentName. */
+  teammateId?: string;
+  teammateName?: string;
 }
 
 /**
@@ -110,6 +113,7 @@ export function normalizeRuns(raw: unknown): RunRecord[] {
         outcome: stored === "running" ? "interrupted" : stored,
         projectId: str(r.projectId), cwd: str(r.cwd), model: str(r.model),
         program: str(r.program), prompt: str(r.prompt), error: str(r.error), resumeId: str(r.resumeId),
+        teammateId: str(r.teammateId), teammateName: str(r.teammateName),
       };
     })
     .slice(-MAX_RUN_RECORDS);

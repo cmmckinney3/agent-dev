@@ -273,3 +273,12 @@ export const DashboardIcon = (p: IconProps) => (
     <rect x="3" y="16" width="7" height="5" rx="1" />
   </Base>
 );
+
+export const TeammatesIcon = (p: IconProps) => (
+  <Base {...p}>
+    <circle cx="9" cy="8" r="3.5" />
+    <path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5" />
+    <path d="M15.5 4.8a3.5 3.5 0 0 1 0 6.4" />
+    <path d="M18 14.9c2 .8 3.2 2.5 3.5 5.1" />
+  </Base>
+);

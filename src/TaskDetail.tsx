@@ -4,6 +4,7 @@ import RunReview from "./RunReview";
 import { AgentConfig } from "./agents";
 import { changeRequestFrom, pickReviewer, VERDICT_LABELS } from "./review";
 import { Task } from "./tasks";
+import { Teammate } from "./teammates";
 import { RunRecord } from "./usage";
 import { taskBlocker } from "./workspace";
 import { PlayIcon, PencilIcon } from "./icons";
@@ -21,6 +22,8 @@ export default function TaskDetail({
   onRequestReview,
   onRequestChanges,
   onOpenTask,
+  teammate,
+  onOpenTeammate,
   onArchive,
   onDuplicate,
   onFocus,
@@ -44,6 +47,9 @@ export default function TaskDetail({
   onRequestReview: (agentId: string) => void;
   onRequestChanges: (feedback: string, rerun: boolean) => void;
   onOpenTask: (id: string) => void;
+  /** The teammate doing this task, if one is. */
+  teammate?: Teammate;
+  onOpenTeammate: (id: string) => void;
   onArchive: () => void;
   onDuplicate: () => void;
   onFocus: () => void;
@@ -97,6 +103,15 @@ export default function TaskDetail({
             {task.mode === "headless" ? "Run to completion" : "Interactive"} ·{" "}
             {task.priority ?? "normal"} priority
           </span>
+          {teammate && (
+            <button
+              className="text-button"
+              onClick={() => onOpenTeammate(teammate.id)}
+              title="Open this teammate's brief and memory"
+            >
+              Teammate: {teammate.name}
+            </button>
+          )}
           <span className="spacer" />
           {task.paneId ? (
             <button className="btn" onClick={onFocus}>

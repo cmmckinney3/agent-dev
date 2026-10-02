@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Mutex,
@@ -16,6 +17,9 @@ const SNAPSHOT_LIMIT: usize = 16 * 1024 * 1024;
 const FILE_LIMIT: u64 = 1024 * 1024;
 const GIT_DETAIL_LIMIT: usize = 300;
 pub const LOG_LIMIT: u64 = 8 * 1024 * 1024;
+/// Most of a teammate's memory file read back after a run; the frontend caps
+/// the stored memory far below this.
+const MEMORY_READ_LIMIT: u64 = 256 * 1024;
 
 pub fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
@@ -813,6 +817,102 @@ pub async fn create_worktree(
     .map_err(|e| e.to_string())?
 }
 
+/// A teammate's memory file inside a run's folder. Only a bare
+/// `[a-z0-9-]+.md` name is accepted, so the path cannot leave
+/// `<cwd>/.crucible/memory`.
+fn memory_file(cwd: &str, file: &str) -> Result<PathBuf, String> {
+    let stem = file.strip_suffix(".md").unwrap_or("");
+    let valid = !stem.is_empty()
+        && file.len() <= 80
+        && !stem.starts_with('-')
+        && stem
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-');
+    if !valid {
+        return Err("Invalid memory file name".into());
+    }
+    let dir = Path::new(cwd);
+    if !dir.is_dir() {
+        return Err("The run's folder does not exist.".into());
+    }
+    Ok(dir.join(".crucible").join("memory").join(file))
+}
+/// Keep `.crucible/` out of Git by adding it to the repository's
+/// `info/exclude` once. From a linked worktree Git names the shared file, so
+/// every worktree of the repository is covered. Not a repository: nothing to do.
+fn exclude_crucible(cwd: &Path) {
+    let Ok(path) = git(cwd, &["rev-parse", "--git-path", "info/exclude"]) else {
+        return;
+    };
+    let path = PathBuf::from(path);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        cwd.join(path)
+    };
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    if existing.lines().any(|line| {
+        matches!(
+            line.trim(),
+            ".crucible/" | ".crucible" | "/.crucible/" | "/.crucible"
+        )
+    }) {
+        return;
+    }
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let mut text = existing;
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(".crucible/\n");
+    let _ = fs::write(&path, text);
+}
+fn seed_memory_inner(cwd: &str, file: &str, content: &str) -> Result<String, String> {
+    let path = memory_file(cwd, file)?;
+    exclude_crucible(Path::new(cwd));
+    let dir = path.parent().ok_or("Invalid memory path")?;
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    // A `.crucible` link pointing elsewhere must not redirect the write.
+    let inside = fs::canonicalize(dir)
+        .ok()
+        .zip(fs::canonicalize(cwd).ok())
+        .is_some_and(|(d, root)| d.starts_with(root));
+    if !inside {
+        return Err("The memory folder resolves outside the run's folder.".into());
+    }
+    atomic_write(&path, content.as_bytes())?;
+    Ok(format!(".crucible/memory/{file}"))
+}
+fn collect_memory_inner(cwd: &str, file: &str) -> Result<Option<String>, String> {
+    let path = memory_file(cwd, file)?;
+    let Ok(handle) = fs::File::open(&path) else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    handle
+        .take(MEMORY_READ_LIMIT)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.to_string())?;
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+}
+/// Write a teammate's memory into the run's folder before it starts. Returns
+/// the path relative to that folder, which is what the prompt names.
+#[tauri::command]
+pub async fn seed_memory(cwd: String, file: String, content: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || seed_memory_inner(&cwd, &file, &content))
+        .await
+        .map_err(|e| e.to_string())?
+}
+/// Read a teammate's memory file back after its run; `None` when it is gone.
+#[tauri::command]
+pub async fn collect_memory(cwd: String, file: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || collect_memory_inner(&cwd, &file))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn export_backup(app: AppHandle, contents: String) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
@@ -1190,6 +1290,102 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dir.join("file.txt")).unwrap(),
             "local changes"
+        );
+    }
+
+    fn init_repo(dir: &Path) {
+        git(dir, &["init", "-q"]).unwrap();
+        fs::write(dir.join("file.txt"), "committed").unwrap();
+        git(dir, &["add", "."]).unwrap();
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=Crucible Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+        )
+        .unwrap();
+    }
+    fn exclude_lines(dir: &Path) -> usize {
+        let path = PathBuf::from(git(dir, &["rev-parse", "--git-path", "info/exclude"]).unwrap());
+        let path = if path.is_absolute() {
+            path
+        } else {
+            dir.join(path)
+        };
+        fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.trim() == ".crucible/")
+            .count()
+    }
+    #[test]
+    fn memory_file_names_cannot_leave_the_memory_folder() {
+        let dir = fixture();
+        let cwd = dir.to_str().unwrap();
+        for bad in [
+            "", ".md", "-a.md", "A.md", "a b.md", "../a.md", "a/b.md", "a\\b.md", "a.txt",
+            "a.md.md", "a_b.md",
+        ] {
+            assert!(memory_file(cwd, bad).is_err(), "{bad:?} must be refused");
+        }
+        assert!(memory_file(cwd, "front-end-ab12cd.md").is_ok());
+        assert!(memory_file(dir.join("missing").to_str().unwrap(), "a.md").is_err());
+    }
+    #[test]
+    fn memory_round_trips_and_stays_out_of_git() {
+        let dir = fixture();
+        init_repo(&dir);
+        let cwd = dir.to_str().unwrap();
+        assert_eq!(collect_memory_inner(cwd, "ada-1.md").unwrap(), None);
+        let path = seed_memory_inner(cwd, "ada-1.md", "- prefers pnpm\n").unwrap();
+        assert_eq!(path, ".crucible/memory/ada-1.md");
+        seed_memory_inner(cwd, "ada-1.md", "- prefers pnpm\n- uses vitest\n").unwrap();
+        assert_eq!(
+            collect_memory_inner(cwd, "ada-1.md").unwrap().as_deref(),
+            Some("- prefers pnpm\n- uses vitest\n")
+        );
+        assert_eq!(exclude_lines(&dir), 1, "the exclude line is written once");
+        assert_eq!(git(&dir, &["status", "--porcelain"]).unwrap(), "");
+        let listed = git(&dir, &["ls-files", "--others", "--exclude-standard"]).unwrap();
+        assert!(!listed.contains(".crucible"), "run snapshots never see it");
+    }
+    #[test]
+    fn memory_seeded_into_a_worktree_is_excluded_for_the_whole_repository() {
+        let dir = fixture();
+        init_repo(&dir);
+        let target = fixture().join("lane");
+        git(
+            &dir,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "codex/lane",
+                target.to_str().unwrap(),
+                "HEAD",
+            ],
+        )
+        .unwrap();
+        seed_memory_inner(target.to_str().unwrap(), "ada-1.md", "note").unwrap();
+        seed_memory_inner(dir.to_str().unwrap(), "ada-1.md", "note").unwrap();
+        assert_eq!(exclude_lines(&dir), 1);
+        assert_eq!(git(&target, &["status", "--porcelain"]).unwrap(), "");
+        assert_eq!(git(&dir, &["status", "--porcelain"]).unwrap(), "");
+    }
+    #[test]
+    fn memory_outside_a_repository_still_round_trips() {
+        let dir = fixture();
+        let cwd = dir.to_str().unwrap();
+        seed_memory_inner(cwd, "ada-1.md", "note").unwrap();
+        assert_eq!(
+            collect_memory_inner(cwd, "ada-1.md").unwrap().as_deref(),
+            Some("note")
         );
     }
 }

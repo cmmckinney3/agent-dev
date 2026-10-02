@@ -8,6 +8,71 @@ The resume list from the previous checkpoint (September 10) is complete except f
 the native desktop verification noted under "Still owed" below. Everything else in
 that list was either implemented or verified as already correct.
 
+## Teammates with per-teammate memory (October 1)
+
+Plan: `docs/teammates-plan.md`. The owner chose memory per teammate (not a
+shared per-stack layer) as the first step toward BridgeMind-style Agent mode.
+
+- **Model** (`src/teammates.ts`, pure): name (unique, case-insensitive, 40
+  chars), engine (`agentId`), brief (2000), memory (16000), timestamps.
+  `Workspace.teammates` is normalized to `[]` when absent (no `STORAGE_KEY`
+  bump, like `dashboardOpen`); strict import rejects a non-list. Engines that
+  leave the catalog fall back to its first entry, and `remapAgent` moves
+  teammates with tasks. `Task.teammateId` is composer-owned, so `draftFromTask`
+  now carries it (its whitelist test was updated) and it is dropped on load when
+  the teammate is gone. `RunRecord` keeps `teammateId` and a `teammateName`
+  snapshot.
+- **A teammate's run.** `startTask` uses the teammate's engine, writes its
+  memory with `seed_memory` into `<run folder>/.crucible/memory/<slug>-<id
+tail>.md`, and sends `teammatePrompt`: "You are <name>…", the brief, the
+  file's relative path and how to keep it, then the usual `launchPrompt`. The
+  run record stores that prompt. The memory text itself is never in argv.
+- **After the run** (exit, stop or failed start) `collect_memory` reads the file
+  and `mergeMemory` folds it in: if the stored memory is unchanged since the
+  seed the file replaces it (the teammate may prune); if it changed (edited on
+  the page, or another run merged first) only the run's new lines are appended.
+  A toast offers **View memory**. A run still going when Crucible closes is not
+  collected.
+- **Native** (`desktop.rs`): `seed_memory` accepts only `[a-z0-9-]+.md` names,
+  refuses a `.crucible` that resolves outside the folder, writes atomically, and
+  adds `.crucible/` once to the file `git rev-parse --git-path info/exclude`
+  names (the shared one from a worktree). `git ls-files --exclude-standard`, which
+  run snapshots use, therefore never lists it. `collect_memory` reads at most
+  256 KiB.
+- **UI.** Teammates page (header, between Workspace and Activity): list with
+  engine and note count; editor for name (validated in place), engine, brief,
+  memory (monospace, no spellcheck, counts, last update, two-step Clear), recent
+  runs and Delete (asks first; tasks keep their engine). The composer's picker is
+  "Who does it" with Teammates and Agents groups. Cards, task detail ("Teammate:
+  <name>", opens the page), the Dashboard and the palette name the teammate.
+
+**Verification**
+
+- `npm test` — **80 passed** (10 new in `tests/teammates.test.mjs`). Note for
+  the next change: each test file transpiles its own list of modules into a temp
+  folder, so when a pure module gains an import (`workspace.ts` now imports
+  `teammates.ts`), add it to every test file that loads an importer or the
+  whole file fails to load.
+- `npm run build` — passes. `cargo test --offline` — **17 passed** on Windows,
+  4 new: name validation, round trip with the exclude line written once and
+  `git status` clean, a worktree covered by the shared exclude, and a non-Git
+  folder.
+- Driven in the vite dev server with the Tauri IPC mock: created Ada on the
+  page, ran a task as Ada and checked the `seed_memory` call (memory to
+  `ada-8304bf.md` in the project folder) and the prompt (preface, brief, path,
+  task, and no memory text); returned a file with a new line and saw "Ada's
+  memory was updated." and the merged notes (CRLF normalized). A second task in
+  another project was seeded with those notes; adding a note on the page during
+  that run and returning a file that pruned one line and added another kept the
+  owner's note, appended the new one and ignored the prune. Duplicate names are
+  refused in place; 900×600 has no horizontal overflow.
+
+**Still owed (native)**
+
+- Run a real Claude Code and Codex task as a teammate: confirm each reads and
+  updates `.crucible/memory/…` without permission prompts, and that the file
+  stays out of `git status` in the real repository.
+
 ## Review verdicts (October 1)
 
 Phase 2 of `docs/agent-status-plan.md` (section 9). Frontend only.

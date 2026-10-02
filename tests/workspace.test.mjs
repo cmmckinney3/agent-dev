@@ -8,7 +8,7 @@ import ts from 'typescript';
 
 // Exercise the actual pure TypeScript models without adding a browser test runtime.
 const temp = mkdtempSync(join(tmpdir(), 'crucible-model-tests-'));
-for (const name of ['workspace', 'layout', 'agents', 'settings', 'tasks', 'usage']) {
+for (const name of ['workspace', 'layout', 'agents', 'settings', 'tasks', 'usage', 'teammates']) {
   const source = readFileSync(new URL(`../src/${name}.ts`, import.meta.url), 'utf8');
   const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
   writeFileSync(join(temp, `${name}.mjs`), outputText.replace(/from "\.\/([^"]+)"/g, 'from "./$1.mjs"'));
@@ -78,7 +78,7 @@ test('layout moves preserve terminal identity and other panes',()=>{
 test('drafts carry only composer fields, so saving cannot revive stale run state',()=>{
   const live=task('task-1',{status:'running',paneId:'pane-3',queued:true,interrupted:true,attention:'Needs input',lastExitCode:3,worktree:'C:\wt',reviewNotes:'looked fine',reviewedAt:5,projectId:'project-1',createdAt:1,archived:true,cwd:'C:\Work',priority:'high',dependencies:['task-2'],isolation:true});
   const draft=draftFromTask(live);
-  assert.deepEqual(Object.keys(draft).sort(),['agentId','cwd','dependencies','isolation','mode','priority','prompt','title']);
+  assert.deepEqual(Object.keys(draft).sort(),['agentId','cwd','dependencies','isolation','mode','priority','prompt','teammateId','title']);
   // Re-saving an edited task must keep whatever the live record moved on to.
   const merged={...live,status:'review',paneId:undefined,queued:false,...draft};
   assert.equal(merged.id,'task-1'); assert.equal(merged.status,'review');

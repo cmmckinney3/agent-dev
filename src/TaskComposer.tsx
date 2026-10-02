@@ -3,11 +3,13 @@ import { open } from "@tauri-apps/plugin-dialog";
 import Modal from "./Modal";
 import { AgentConfig } from "./agents";
 import { Task, TaskDraft, draftFromTask } from "./tasks";
+import { Teammate } from "./teammates";
 import { PromptTemplate } from "./workspace";
 import { FolderIcon, PlayIcon } from "./icons";
 export default function TaskComposer({
   task,
   agents,
+  teammates,
   cwd,
   tasks,
   templates,
@@ -19,6 +21,7 @@ export default function TaskComposer({
 }: {
   task?: Task;
   agents: AgentConfig[];
+  teammates: Teammate[];
   cwd: string;
   tasks: Task[];
   templates: PromptTemplate[];
@@ -131,16 +134,40 @@ export default function TaskComposer({
         </label>
         <div className="form-grid">
           <label>
-            Agent
+            Who does it
             <select
-              value={draft.agentId}
-              onChange={(e) => patch({ agentId: e.target.value })}
+              value={
+                draft.teammateId
+                  ? `teammate:${draft.teammateId}`
+                  : draft.agentId
+              }
+              onChange={(e) => {
+                const mate = teammates.find(
+                  (t) => `teammate:${t.id}` === e.target.value,
+                );
+                // A teammate brings its own engine; an agent clears the teammate.
+                if (mate) patch({ teammateId: mate.id, agentId: mate.agentId });
+                else patch({ agentId: e.target.value, teammateId: undefined });
+              }}
             >
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
+              {teammates.length > 0 && (
+                <optgroup label="Teammates">
+                  {teammates.map((t) => (
+                    <option key={t.id} value={`teammate:${t.id}`}>
+                      {t.name} ·{" "}
+                      {agents.find((a) => a.id === t.agentId)?.name ??
+                        "engine off"}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <optgroup label="Agents">
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </label>
           <label>

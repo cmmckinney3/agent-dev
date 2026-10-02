@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { AgentConfig } from "./agents";
+import { Teammate } from "./teammates";
 import { Task, TASK_COLUMNS, TaskStatus } from "./tasks";
 import { taskBlocker } from "./workspace";
 import {
@@ -17,6 +18,7 @@ interface Props {
   tasks: Task[];
   allTasks: Task[];
   agents: AgentConfig[];
+  teammates: Teammate[];
   collapsed: boolean;
   onCollapse: () => void;
   onNew: () => void;
@@ -182,6 +184,9 @@ export default function TaskBoard(p: Props) {
                     ) : (
                       cards.map((task) => {
                         const a = p.agents.find((a) => a.id === task.agentId);
+                        const mate = task.teammateId
+                          ? p.teammates.find((t) => t.id === task.teammateId)
+                          : undefined;
                         const blocker = taskBlocker(task, p.allTasks);
                         return (
                           <article
@@ -198,7 +203,7 @@ export default function TaskBoard(p: Props) {
                           >
                             <div className="task-item-meta">
                               <span style={{ color: a?.accent }}>
-                                {a?.name ?? "Agent"}
+                                {mate?.name ?? a?.name ?? "Agent"}
                               </span>
                               {task.priority === "high" && (
                                 <span className="priority-high">High</span>
