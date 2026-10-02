@@ -39,6 +39,9 @@ tail>.md`, and sends `teammatePrompt`: "You are <name>…", the brief, the
   names (the shared one from a worktree). `git ls-files --exclude-standard`, which
   run snapshots use, therefore never lists it. `collect_memory` reads at most
   256 KiB.
+- **Version 0.6.0** in `tauri.conf.json`, `Cargo.toml`, `package.json` and both
+  lockfiles, so the next MSI upgrades an installed 0.5.0 in place. `upgradeCode`
+  and `identifier` are unchanged.
 - **UI.** Teammates page (header, between Workspace and Activity): list with
   engine and note count; editor for name (validated in place), engine, brief,
   memory (monospace, no spellcheck, counts, last update, two-step Clear), recent
