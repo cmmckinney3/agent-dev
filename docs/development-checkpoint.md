@@ -59,6 +59,10 @@ Plan: `docs/agent-status-plan.md` section 10 (phase 1b).
   printed on screen. Headless runs and launches with the setting off got no
   `--settings`.
 
+- **Version 0.8.0** in `tauri.conf.json`, `Cargo.toml`, `package.json` and both
+  lockfiles, so the next MSI upgrades an installed 0.7.0 in place. `upgradeCode`
+  and `identifier` are unchanged.
+
 **Still owed (native)**
 
 - A Crucible build running real Claude Code sessions end to end (installed
