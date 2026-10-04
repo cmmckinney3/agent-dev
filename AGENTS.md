@@ -55,8 +55,10 @@ npm run tauri build      # produce a standalone installer
 (`spawn_agent`, `write_to_agent`, `resize_agent`, `kill_agent`, `wait_for_saves`);
 `src-tauri/src/desktop.rs` is everything else the desktop owns — `load_workspace`,
 `save_workspace`, `project_info`, `check_agent`, `read_run`, `create_worktree`,
-`seed_teammate_run`, `collect_teammate_run`, `export_backup`, `import_backup`,
-`save_window_state`.
+`seed_teammate_run`, `collect_teammate_run`, `claude_hook_settings`,
+`export_backup`, `import_backup`, `save_window_state`. `main.rs` first checks
+for `--crucible-hook <event>`: Crucible's own executable doubles as its Claude
+Code hook (`desktop::hook_main`) and exits before any window or state is touched.
 Each spawn opens a `portable-pty` pseudo-terminal, resolves the program (a Windows npm
 cmd-shim is launched as `node <script>` directly, since `cmd.exe` would reparse the
 prompt; any other `.cmd`/`.bat` goes through `cmd.exe /c` and refuses a prompt holding
@@ -120,6 +122,19 @@ failing the whole load. Portable backups are redacted by default.
   Echoes of the user's typing and redraws after a resize never count as work.
   Done stays until the pane is clicked or typed in: every launch focuses its
   terminal, so the active pane is no proof anyone watched it finish.
+  **Interactive Claude Code sessions report exactly instead.** Crucible launches
+  them with `--settings` pointing at hooks that run its own executable
+  (`claude_hook_settings`); each prints JSON whose `terminalSequence` is an
+  OSC 777 `crucible;<event>;<kind>;<text>` sequence, which Claude Code writes to
+  the pane's own terminal (OSC 777 is on its allowlist), so no file, port or
+  shell is involved. `parseHook` / `onHook` turn the events into transitions:
+  UserPromptSubmit starts a turn, Stop ends it as Done, PermissionRequest,
+  StopFailure and blocking notifications are Needs you and `held` through the
+  dialog's redraws, a lone Esc ends the turn (Claude Code sends no Stop after an
+  interrupt), and once a session is `hooked` output alone is not work. Headless
+  (`-p`) runs ignore hook output, so they are not hooked;
+  `settings.claudeHooks` turns it off, and an agent passing its own
+  `--settings` keeps them.
 - `src/Dashboard.tsx` — the Dashboard panel: count tiles and every session in
   every project grouped by activity, with time in state. Docked beside the panes
   from 1100px wide, floating over them below that. `src/desktopNotify.ts` sends
@@ -275,7 +290,7 @@ keys. That path only works while the identifier stays the same.
 - `docs/task-board-plan.md` — original board/scheduling design rationale.
 - `docs/premium-experience-audit.md` — the review this rework was built from.
 - `docs/agent-status-plan.md` — the agent status, Dashboard and notifications
-  plan (phase 1 built; phases 1b–3 listed).
+  plan (phases 1, 1b (Claude Code hooks) and 2 built; phase 3 listed).
 - `docs/teammates-plan.md` — teammates and per-teammate memory.
 - `docs/messaging-plan.md` — messages between teammates: the file channel,
   delivery, message-started tasks and the chain limit.

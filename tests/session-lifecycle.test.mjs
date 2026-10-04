@@ -8,7 +8,7 @@ import ts from 'typescript';
 const temp=mkdtempSync(join(tmpdir(),'crucible-session-tests-'));
 after(()=>{if(resolve(temp).startsWith(resolve(tmpdir())+'\\')||resolve(temp).startsWith(resolve(tmpdir())+'/'))rmSync(temp,{recursive:true});});
 writeFileSync(join(temp,'native.mjs'),`export const bridge={calls:[],handlers:{},invoke:async()=>{}};export const invoke=(name,args)=>{bridge.calls.push({name,args});return bridge.invoke(name,args)};export const isTauri=()=>true;export const listen=async(name,handler)=>{bridge.handlers[name]=handler;return ()=>delete bridge.handlers[name]};export const openUrl=async()=>{};
-export class Terminal {options={};cols=80;rows=24;parser={registerOscHandler(code,fn){this.osc=fn}};output=[];screen=[];buffer={active:{baseY:0,getLine:i=>i<this.screen.length?{translateToString:()=>this.screen[i],isWrapped:false}:undefined}};loadAddon(){}onData(fn){this.input=fn}onBell(fn){this.bell=fn}attachCustomKeyEventHandler(){}reset(){this.output=[]}write(t){this.output.push(t)}writeln(t){this.output.push(t)}focus(){}dispose(){this.disposed=true}}
+export class Terminal {options={};cols=80;rows=24;parser={handlers:{},registerOscHandler(code,fn){this.handlers[code]=fn;if(code===9)this.osc=fn}};output=[];screen=[];buffer={active:{baseY:0,getLine:i=>i<this.screen.length?{translateToString:()=>this.screen[i],isWrapped:false}:undefined}};loadAddon(){}onData(fn){this.input=fn}onBell(fn){this.bell=fn}attachCustomKeyEventHandler(){}reset(){this.output=[]}write(t){this.output.push(t)}writeln(t){this.output.push(t)}focus(){}dispose(){this.disposed=true}}
 export class FitAddon{fit(){}}export class SearchAddon{}export class WebLinksAddon{}`);
 const transpile=name=>ts.transpileModule(readFileSync(new URL(`../src/${name}.ts`,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ES2022,target:ts.ScriptTarget.ES2022}}).outputText;
 writeFileSync(join(temp,'activity.mjs'),transpile('activity'));
@@ -32,6 +32,23 @@ test('delivery failures reject and disabled recording reaches the native command
 });
 test('failed launches report one completion with a useful error',async()=>{
  const api=await setup();const events=[];api.subscribeSessions(e=>events.push(e));bridge.invoke=async()=>{throw Error('executable missing')};assert.equal(await api.startSession('pane',launch(),settings),false);assert.equal(api.sessionState('pane'),'failed');assert.equal(events.filter(e=>e.completed).length,1);assert.match(events.at(-1).error,/executable missing/);
+});
+test('Claude Code hook events reach the pane through OSC 777',async()=>{
+ const api=await setup();const changes=[];api.subscribeActivity((id,a)=>changes.push(a?.activity));
+ await api.startSession('pane',launch(),settings);
+ const term=api.getSession('pane',settings).term;const osc=term.parser.handlers[777];
+ assert.equal(osc('notify;Build;done'),false,'other OSC 777 notifications are left alone');
+ assert.equal(api.sessionActivity('pane').activity,'idle');
+ assert.equal(osc('crucible;UserPromptSubmit;;'),true);assert.equal(api.sessionActivity('pane').activity,'working');
+ osc('crucible;PermissionRequest;Bash;npm test');assert.equal(api.sessionActivity('pane').reason,'Allow Bash: npm test?');
+ bridge.handlers['agent-output']({payload:{id:'pane',run_id:'run-one',data:btoa('dialog redraw')}});
+ assert.equal(api.sessionActivity('pane').activity,'waiting','drawing the dialog is not work');
+ term.input('1');assert.equal(api.sessionActivity('pane').activity,'idle');
+ await new Promise(r=>setTimeout(r,450)); // past the echo window of the keystroke
+ bridge.handlers['agent-output']({payload:{id:'pane',run_id:'run-one',data:btoa('running npm test')}});
+ assert.equal(api.sessionActivity('pane').activity,'working','the turn goes on once answered');
+ osc('crucible;Stop;;');assert.equal(api.sessionActivity('pane').activity,'done');
+ assert.deepEqual(changes,['idle','working','waiting','idle','working','done']);
 });
 test('activity follows a seeded run through work, a prompt, completion and a stop',async()=>{
  const api=await setup();const changes=[];api.subscribeActivity((id,a)=>changes.push(a?.activity));

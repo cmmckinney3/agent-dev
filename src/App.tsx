@@ -35,13 +35,16 @@ import {
   waitingFor,
 } from "./messages";
 import {
+  AgentConfig,
   AgentDraft,
   enabledAgents,
+  isClaudeCode,
   launchBlockReason,
   launchEnv,
   PROMPT_TOKEN,
   resolveTokens,
   seedArgs,
+  withHookSettings,
 } from "./agents";
 import {
   applyPreset,
@@ -192,6 +195,10 @@ export default function App({
   const teamRuns = useRef(new Map<string, TeamRun>());
   /** Reads of teammate runs still in flight; closing waits for them. */
   const collecting = useRef(new Set<Promise<void>>());
+  /** Path of the Claude Code hook settings file, written once per launch. */
+  const hookSettings = useRef<Promise<string | undefined> | undefined>(
+    undefined,
+  );
   const [expanded, setExpanded] = useState<string>();
   const [agentManager, setAgentManager] = useState(false);
   const [palette, setPalette] = useState(false);
@@ -944,6 +951,30 @@ export default function App({
       ...extra,
     };
   };
+  /**
+   * An interactive Claude Code launch gets Crucible's hooks, so it reports its
+   * turns and permission prompts exactly (see desktop.rs and activity.ts).
+   * Headless runs are left alone: Claude Code ignores terminal output from
+   * hooks with `-p`. Without the file, the launch goes ahead unhooked.
+   */
+  const withHooks = async (
+    agent: AgentConfig,
+    args: string[],
+  ): Promise<string[]> => {
+    if (
+      !latest.current.settings.claudeHooks ||
+      !isClaudeCode(agent) ||
+      !isTauri()
+    )
+      return args;
+    hookSettings.current ??= invoke<string>("claude_hook_settings").catch(
+      () => undefined,
+    );
+    const path = await hookSettings.current;
+    // A failed write is retried by the next launch.
+    if (!path) hookSettings.current = undefined;
+    return path ? withHookSettings(args, path) : args;
+  };
   const recordRun = (run: RunRecord) => {
     if (latest.current.settings.recordUsage)
       change((v) => ({
@@ -980,23 +1011,38 @@ export default function App({
       run.resumeId = resume.sessionId;
       run.prompt = resume.run.prompt;
     }
-    const args = resume
+    const base = resume
       ? a.program === "codex"
         ? ["resume", resume.sessionId]
         : ["--resume", resume.sessionId]
       : a.interactiveArgs
           .filter((arg) => !arg.includes(PROMPT_TOKEN))
           .map((arg) => resolveTokens(arg, a, state.settings));
-    patchProject(p.id, (value) => ({
-      ...value,
-      slotAgents: { ...value.slotAgents, [slot]: a.id },
-    }));
-    recordRun(run);
-    await startSession(
-      slot,
-      { program: a.program, cwd, args, env: launchEnv(a, state.settings), run },
-      state.settings,
-    );
+    // Held while the hook settings are fetched, so a second click cannot
+    // start the pane twice.
+    reservations.current.add(slot);
+    try {
+      const args = await withHooks(a, base);
+      if (transitioning.current || isBusy(sessionState(slot))) return;
+      patchProject(p.id, (value) => ({
+        ...value,
+        slotAgents: { ...value.slotAgents, [slot]: a.id },
+      }));
+      recordRun(run);
+      await startSession(
+        slot,
+        {
+          program: a.program,
+          cwd,
+          args,
+          env: launchEnv(a, state.settings),
+          run,
+        },
+        state.settings,
+      );
+    } finally {
+      reservations.current.delete(slot);
+    }
   };
 
   const startTask = async (id: string) => {
@@ -1128,6 +1174,9 @@ export default function App({
           team: outbox ? team : [],
         });
       }
+      const seeded = seedArgs(a, prompt, task.mode, state.settings);
+      const args =
+        task.mode === "interactive" ? await withHooks(a, seeded) : seeded;
       const run = createRun(
         slot,
         a.id,
@@ -1153,7 +1202,7 @@ export default function App({
         {
           program: a.program,
           cwd,
-          args: seedArgs(a, prompt, task.mode, state.settings),
+          args,
           env: launchEnv(a, state.settings),
           run,
           seeded: true,

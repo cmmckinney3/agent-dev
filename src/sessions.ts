@@ -14,11 +14,13 @@ import {
   onAttention,
   onBell,
   onExit,
+  onHook,
   onInput,
   onOutput,
   onResize,
   onSeen,
   onTick,
+  parseHook,
   SCREEN_LINES,
 } from "./activity";
 
@@ -284,6 +286,14 @@ export function getSession(id: string, settings: Settings): Session {
         attention: message.slice(0, 300) || "Agent requested attention",
       });
     }
+    return true;
+  });
+  // Crucible's Claude Code hooks report through OSC 777 (see desktop.rs);
+  // anything else on 777 is left to the terminal.
+  term.parser.registerOscHandler(777, (data) => {
+    const signal = parseHook(data);
+    if (!signal) return false;
+    if (isBusy(s.status)) touch(s, (a) => onHook(a, Date.now(), signal));
     return true;
   });
   term.onBell(() => {

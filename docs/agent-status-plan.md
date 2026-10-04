@@ -1,6 +1,7 @@
 # Implementation plan — Agent status, Dashboard and notifications
 
-Status: phase 1 implemented 2026-10-01 (see `docs/development-checkpoint.md`) ·
+Status: phase 1 implemented 2026-10-01, phase 1b (Claude Code hooks, section
+10) 2026-10-04 (see `docs/development-checkpoint.md`) ·
 Research and rationale: `docs/bridgemind-research.md` (sections 4 and 5)
 
 **Changed while building phase 1** (the rest of this document is the plan as
@@ -305,3 +306,64 @@ string; at: number }`, normalized in `normalizeWorkspace` (dropped when
 An opt-in loop that sends a REQUEST CHANGES verdict back automatically, capped
 at N rounds. It needs the argv rule revisited, since no one would see the text
 before it is sent.
+
+## 10. Phase 1b — Claude Code hooks (implemented 2026-10-04)
+
+The terminal heuristic works for any CLI, but it guesses: Done comes two
+seconds after output stops, and Needs you depends on the prompt's wording. Claude
+Code can say exactly what it is doing through hooks, so Crucible's interactive
+Claude Code sessions now report that way.
+
+### Channel
+
+Checked against Claude Code 2.1.289 on Windows before building:
+
+- `claude --settings <file>` adds hooks for one session; Claude Code merges them
+  with the user's own and never writes the file, so the user's settings are
+  untouched.
+- A hook's JSON output may carry `terminalSequence`, which Claude Code writes to
+  its own terminal: the PTY Crucible reads. Only OSC 0/1/2/9/99/777 and BEL are
+  allowed; anything else voids the field. It is honoured in interactive
+  sessions only, not with `-p`.
+- Exec-form hooks (`command` plus `args`) run an executable directly, with no
+  shell.
+
+So each hook runs Crucible's own executable, `crucible --crucible-hook
+<event>` (handled in `main.rs` before Tauri starts; about 25 ms warm), which
+reads the event from stdin and prints `{"terminalSequence":"ESC]777;crucible;
+<event>;<kind>;<text>BEL"}`. The event reaches exactly the pane that runs the
+session, with no file, port or run-id mapping. `kind` is the notification
+type, the tool asking for permission or the error type; `text` is the
+notification message, the command, file (relative to the session's folder) or
+URL, or the error message, with control characters removed and capped at 200
+characters. The prompt text itself is never passed on.
+
+Hooked events: `UserPromptSubmit`, `Stop`, `StopFailure`, `PermissionRequest`,
+`Notification`. A real session showed `UserPromptSubmit` for the seeded
+prompt, `PermissionRequest` before the dialog is drawn, `Stop` at the end of a
+turn, and **no** `Stop` after Esc rejects a permission request (Esc interrupts
+the turn).
+
+### Model (`activity.ts`)
+
+- `parseHook` reads the payload; `onHook` applies it: a prompt starts a turn
+  (Working), Stop ends it (Done at once), PermissionRequest and StopFailure are
+  Needs you with the reason ("Allow Write: src/a.ts?", "Stopped by an error
+  (rate limit): …"), blocking notifications (permission prompt, elicitation,
+  agent needs input) are Needs you but never replace a more specific reason,
+  and Claude Code's idle notification settles a turn still showing Working.
+- A hook's Needs you is `held`: the dialog drawing itself does not flip it back
+  to Working; only an answer (input) or another hook does.
+- Once a session is `hooked`, output without a turn is the interface redrawing,
+  not work, and a lone Esc ends the turn (and the pane counts as seen).
+- The heuristics stay underneath as the fallback (quiet ends Working, prompts on
+  screen still count), so a hook that fails to run only costs precision.
+
+### Launching
+
+`withHooks` in App adds `--settings <data dir>/claude-hooks.json` (written by
+`claude_hook_settings` with the current executable's path) to interactive
+launches of agents whose program is Claude Code (`isClaudeCode`): manual
+starts, resumes and interactive tasks. Headless runs, other CLIs, an agent
+that passes its own `--settings`, and Settings → Workspace → "Exact status from
+Claude Code" switched off are launched as before.

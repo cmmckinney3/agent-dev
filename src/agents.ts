@@ -249,6 +249,25 @@ export function seedArgs(
 }
 
 /**
+ * Claude Code, whatever the catalog calls it: Crucible's hooks only work with
+ * that CLI. Matched on the program (`claude`, `claude.exe`, a path to either).
+ */
+export function isClaudeCode(agent: Pick<AgentConfig, "program">): boolean {
+  const file = agent.program.trim().split(/[\\/]/).pop() ?? "";
+  return /^claude(?:\.(?:exe|cmd))?$/i.test(file);
+}
+
+/**
+ * Launch args with Crucible's hook settings in front. An agent whose own args
+ * already pass `--settings` keeps them: Claude Code reads only one.
+ */
+export function withHookSettings(args: string[], path: string): string[] {
+  return args.some((a) => a === "--settings" || a.startsWith("--settings="))
+    ? args
+    : ["--settings", path, ...args];
+}
+
+/**
  * Environment for a spawned agent. Tokens are resolved and anything left empty
  * is dropped — exporting `OPENAI_API_KEY=""` reads as "authenticated with
  * nothing" to most CLIs, which is worse than leaving the variable unset.

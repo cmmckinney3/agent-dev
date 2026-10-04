@@ -1,4 +1,4 @@
-# Development checkpoint — October 3, 2026
+# Development checkpoint — October 4, 2026
 
 **Development only: do not replace, install over, or modify the installed Crucible
 app.** Resume this working tree; do not reset it. Many files were already modified
@@ -7,6 +7,64 @@ before this implementation.
 The resume list from the previous checkpoint (September 10) is complete except for
 the native desktop verification noted under "Still owed" below. Everything else in
 that list was either implemented or verified as already correct.
+
+## Claude Code hooks: exact status (October 4)
+
+Plan: `docs/agent-status-plan.md` section 10 (phase 1b).
+
+- **Hook mode** (`desktop.rs`, `main.rs`): `crucible --crucible-hook <event>`
+  reads the event from stdin (1 MiB kept, the rest drained) and prints
+  `claude_hook_output`: JSON whose `terminalSequence` is `ESC]777;crucible;
+  <event>;<kind>;<text>BEL`. Text is single-line, control-free and capped at
+  200 characters; a permission's file path is made relative to the session's
+  folder (ASCII case and slash direction ignored, so a sibling such as
+  `C:\Work\Apple` is not inside `C:\Work\App`). Unknown events print `{}`.
+- **Settings file**: `claude_hook_settings` writes
+  `<data dir>/claude-hooks.json` (exec-form hooks for UserPromptSubmit, Stop,
+  StopFailure, PermissionRequest and Notification, running the current
+  executable, 10 s timeout) and returns its path.
+- **Launches** (`App.tsx`): `withHooks` prepends `--settings <path>` for
+  interactive Claude Code launches (manual start, resume, interactive task)
+  when `settings.claudeHooks` is on (default) and the agent does not pass its
+  own `--settings`. `startManual` now holds the pane's reservation while it
+  waits, so a double click cannot start it twice.
+- **Model** (`activity.ts`): `parseHook`, `onHook`, `hooked`, `held` as in the
+  plan; `sessions.ts` registers an OSC 777 handler that passes anything not
+  `crucible;` back to the terminal. The pane's status tooltip says "Reported by
+  Claude Code" for a hooked session.
+- **Setting**: Settings → Workspace → "Exact status from Claude Code".
+
+**Verification**
+
+- `npm test` — **105 passed** (new: hook parsing and transitions in
+  `tests/activity.test.mjs`, the OSC 777 path in
+  `tests/session-lifecycle.test.mjs`, whose terminal stub now keeps OSC
+  handlers by number, and `tests/agents.test.mjs` for `isClaudeCode`,
+  `withHookSettings` and the setting). `npm run build` passes.
+- `cargo test --offline` — **21 passed** (3 new: the output is one allowlisted
+  OSC 777 with clean text and nothing of the prompt, permission details and
+  relative paths, the settings file's exec-form hooks).
+- **Real Claude Code 2.1.289** in a ConPTY (a scratch harness, environment
+  cleared of the calling session's variables, the debug build as the hook):
+  a plain prompt produced `UserPromptSubmit` at 4.2 s and `Stop` at 7.2 s; in
+  `--permission-mode default` a Write produced
+  `PermissionRequest;Write;…\hook-probe.txt` before the dialog, and Esc
+  rejected it with no `Stop`. Hook mode takes about 25 ms warm. A
+  GUI-subsystem executable (as a release build is) reads and writes piped
+  stdio normally.
+- In the vite dev server with the IPC mock, through the real xterm.js parser: a
+  manual Claude Code start passed `--settings`; prompt → Working, permission →
+  "Needs you · Allow Write: hook-probe.txt?" held while the dialog drew, a
+  foreign OSC 777 ignored, Stop → Done on the pane and the Dashboard, nothing
+  printed on screen. Headless runs and launches with the setting off got no
+  `--settings`.
+
+**Still owed (native)**
+
+- A Crucible build running real Claude Code sessions end to end (installed
+  path with spaces, `Program Files`), including a permission prompt in a
+  session that is not in auto mode. The owner's Claude Code runs in auto mode,
+  so most turns will show Working → Done with no permission prompt.
 
 ## Teammate messaging (October 3)
 

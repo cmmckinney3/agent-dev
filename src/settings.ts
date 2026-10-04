@@ -36,6 +36,12 @@ export interface OpenRouterSettings {
 export interface Settings {
   notifyOnCompletion: boolean;
   desktopNotifications: DesktopNotifications;
+  /**
+   * Interactive Claude Code sessions get Crucible's hooks (`--settings`), so
+   * they report turns and permission prompts exactly instead of being read off
+   * the screen.
+   */
+  claudeHooks: boolean;
   // ---- Terminal ----
   /** xterm font size in px. */
   fontSize: number;
@@ -101,6 +107,7 @@ export const DEFAULT_REVIEW_INSTRUCTIONS = [
 export const DEFAULT_SETTINGS: Settings = {
   notifyOnCompletion: true,
   desktopNotifications: "background",
+  claudeHooks: true,
   fontSize: 13,
   fontFamily: "",
   scrollback: 10000,
@@ -201,6 +208,7 @@ export function normalizeSettings(raw: unknown): Settings {
     )
       ? (r.desktopNotifications as DesktopNotifications)
       : d.desktopNotifications,
+    claudeHooks: bool(r.claudeHooks, d.claudeHooks),
     fontSize: num(
       r.fontSize,
       d.fontSize,

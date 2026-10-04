@@ -245,7 +245,14 @@ export default function AgentPane(p: Props) {
           )}
           <span
             className={`session-status ${doing ? `activity-${doing.activity}` : status}`}
-            title={doing?.reason}
+            title={
+              [
+                doing?.reason,
+                doing?.hooked ? "Reported by Claude Code" : undefined,
+              ]
+                .filter(Boolean)
+                .join(" · ") || undefined
+            }
           >
             <span />
             {doing ? ACTIVITY_LABELS[doing.activity] : labels[status]}

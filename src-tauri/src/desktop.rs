@@ -20,6 +20,18 @@ pub const LOG_LIMIT: u64 = 8 * 1024 * 1024;
 /// Most of a teammate run's memory or outbox file read back; the frontend
 /// caps what it keeps far below this.
 const TEAMMATE_READ_LIMIT: u64 = 256 * 1024;
+/// Claude Code hook events Crucible listens to (see `claude_hook_settings`).
+pub const CLAUDE_HOOK_EVENTS: [&str; 5] = [
+    "UserPromptSubmit",
+    "Stop",
+    "StopFailure",
+    "PermissionRequest",
+    "Notification",
+];
+/// Longest text a hook passes on; the frontend caps what it shows further.
+const HOOK_TEXT_MAX: usize = 200;
+/// Most of a hook's input that is kept: a Write tool's input holds the file.
+const HOOK_INPUT_MAX: usize = 1024 * 1024;
 
 pub fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
@@ -986,6 +998,148 @@ pub async fn collect_teammate_run(
         .map_err(|e| e.to_string())?
 }
 
+/// One line of hook text: control characters gone, whitespace collapsed,
+/// capped. It is shown in Crucible's status, never run or sent anywhere.
+fn hook_text(text: &str) -> String {
+    let flat: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    flat.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(HOOK_TEXT_MAX)
+        .collect()
+}
+/// `path` relative to `cwd` when it lies inside it (compared without regard
+/// to case or slash direction, as Windows does); otherwise unchanged.
+fn relative_to(path: &str, cwd: &str) -> String {
+    let cwd = cwd.trim_end_matches(['/', '\\']);
+    let slash = |c: char| c == '/' || c == '\\';
+    let inside = !cwd.is_empty()
+        && path.get(..cwd.len()).is_some_and(|head| {
+            head.chars().count() == cwd.chars().count()
+                && head
+                    .chars()
+                    .zip(cwd.chars())
+                    .all(|(a, b)| a.eq_ignore_ascii_case(&b) || (slash(a) && slash(b)))
+        })
+        && path[cwd.len()..].starts_with(slash)
+        && path.len() > cwd.len() + 1;
+    if inside {
+        path[cwd.len() + 1..].to_string()
+    } else {
+        path.to_string()
+    }
+}
+/// What Crucible prints as a Claude Code hook: JSON whose `terminalSequence`
+/// Claude Code writes to the session's own terminal, so the event reaches
+/// exactly the pane running it. OSC 777 is on Claude Code's allowlist; the
+/// payload is `crucible;<event>;<kind>;<text>`, where `kind` is the
+/// notification type, the tool asking for permission or the error type.
+pub fn claude_hook_output(event: &str, input: &[u8]) -> String {
+    if !CLAUDE_HOOK_EVENTS.contains(&event) {
+        return "{}".into();
+    }
+    let value: Value = serde_json::from_slice(input).unwrap_or(Value::Null);
+    let text = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    };
+    let (kind, detail) = match event {
+        "StopFailure" => (text("error_type"), text("error_message")),
+        "Notification" => (text("notification_type"), text("message")),
+        "PermissionRequest" => {
+            let tool = value.get("tool_input");
+            let field = |key: &str| tool.and_then(|t| t.get(key)).and_then(Value::as_str);
+            let what = match field("command") {
+                Some(command) => command.to_string(),
+                // A file inside the session's folder reads better relative.
+                None => match field("file_path") {
+                    Some(path) => relative_to(path, &text("cwd")),
+                    None => field("url").unwrap_or_default().to_string(),
+                },
+            };
+            (text("tool_name"), what)
+        }
+        _ => (String::new(), String::new()),
+    };
+    let sequence = format!(
+        "\u{1b}]777;crucible;{event};{};{}\u{7}",
+        hook_text(&kind).replace(';', " "),
+        hook_text(&detail)
+    );
+    json!({ "terminalSequence": sequence }).to_string()
+}
+/// `crucible --crucible-hook <event>`: run as a Claude Code hook. Reads the
+/// event from stdin, prints `claude_hook_output` and exits, before any window
+/// or state is touched. `None` when this is an ordinary launch.
+pub fn hook_main() -> Option<i32> {
+    use std::io::Write;
+    let mut args = std::env::args().skip(1);
+    if args.next().as_deref() != Some("--crucible-hook") {
+        return None;
+    }
+    let event = args.next().unwrap_or_default();
+    // Read to the end so Claude Code never writes into a closed pipe, but keep
+    // only the start.
+    let mut input = Vec::new();
+    let mut chunk = [0u8; 64 * 1024];
+    let mut stdin = std::io::stdin().lock();
+    while let Ok(n) = stdin.read(&mut chunk) {
+        if n == 0 {
+            break;
+        }
+        let room = HOOK_INPUT_MAX.saturating_sub(input.len());
+        input.extend_from_slice(&chunk[..n.min(room)]);
+    }
+    let mut stdout = std::io::stdout().lock();
+    let _ = stdout.write_all(claude_hook_output(&event, &input).as_bytes());
+    let _ = stdout.flush();
+    Some(0)
+}
+/// The settings Crucible passes to its Claude Code sessions with `--settings`:
+/// one hook per event in CLAUDE_HOOK_EVENTS, each running this executable in
+/// hook mode (exec form: no shell, no script). Claude Code merges them with
+/// the user's own hooks; the user's settings files are never touched.
+pub fn claude_hook_settings_json(exe: &str) -> Value {
+    let hooks: serde_json::Map<String, Value> = CLAUDE_HOOK_EVENTS
+        .iter()
+        .map(|event| {
+            (
+                event.to_string(),
+                json!([{ "hooks": [{
+                    "type": "command",
+                    "command": exe,
+                    "args": ["--crucible-hook", event],
+                    "timeout": 10
+                }] }]),
+            )
+        })
+        .collect();
+    json!({ "hooks": hooks })
+}
+/// Write the hook settings file for this executable and return its path.
+#[tauri::command]
+pub async fn claude_hook_settings(app: AppHandle) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let path = data_dir(&app)?.join("claude-hooks.json");
+        let settings = claude_hook_settings_json(&exe.to_string_lossy());
+        atomic_write(
+            &path,
+            &serde_json::to_vec_pretty(&settings).map_err(|e| e.to_string())?,
+        )?;
+        Ok(path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn export_backup(app: AppHandle, contents: String) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
@@ -1511,5 +1665,100 @@ mod tests {
             collect_teammate_run_inner(cwd, "ada-1", true).unwrap(),
             files(Some("note"), None)
         );
+    }
+    /// The sequence a hook prints, or None for an empty object.
+    fn sequence(event: &str, input: &str) -> Option<String> {
+        let out: Value =
+            serde_json::from_str(&claude_hook_output(event, input.as_bytes())).unwrap();
+        out.get("terminalSequence")
+            .and_then(Value::as_str)
+            .map(String::from)
+    }
+    #[test]
+    fn hook_output_is_one_allowlisted_osc_777_with_clean_text() {
+        assert_eq!(
+            sequence("UserPromptSubmit", r#"{"prompt":"secret plans"}"#).unwrap(),
+            "\u{1b}]777;crucible;UserPromptSubmit;;\u{7}",
+            "the prompt itself is never passed on"
+        );
+        assert_eq!(
+            sequence("Stop", "not json at all").unwrap(),
+            "\u{1b}]777;crucible;Stop;;\u{7}"
+        );
+        assert_eq!(
+            sequence(
+                "Notification",
+                r#"{"notification_type":"permission_prompt","message":"Claude needs\nyour permission"}"#
+            )
+            .unwrap(),
+            "\u{1b}]777;crucible;Notification;permission_prompt;Claude needs your permission\u{7}"
+        );
+        // Escape sequences and bells in agent text cannot break out of the OSC.
+        let failure = sequence(
+            "StopFailure",
+            "{\"error_type\":\"rate;limit\",\"error_message\":\"slow \\u001b]0;x\\u0007 down\"}",
+        )
+        .unwrap();
+        assert_eq!(
+            failure,
+            "\u{1b}]777;crucible;StopFailure;rate limit;slow ]0;x down\u{7}"
+        );
+        assert_eq!(failure.matches(['\u{1b}', '\u{7}']).count(), 2);
+        let long = format!(
+            r#"{{"tool_name":"Bash","tool_input":{{"command":"{}"}}}}"#,
+            "x".repeat(5000)
+        );
+        assert!(sequence("PermissionRequest", &long).unwrap().len() < 260);
+        assert_eq!(
+            sequence("PreToolUse", "{}"),
+            None,
+            "only the events it asked for"
+        );
+    }
+    #[test]
+    fn permission_hooks_name_the_tool_and_what_it_touches() {
+        let ask = |input: &str| sequence("PermissionRequest", input).unwrap();
+        assert_eq!(
+            ask(r#"{"tool_name":"Bash","tool_input":{"command":"npm test","description":"run"}}"#),
+            "\u{1b}]777;crucible;PermissionRequest;Bash;npm test\u{7}"
+        );
+        assert_eq!(
+            ask(
+                r#"{"cwd":"C:\\Work\\App","tool_name":"Write","tool_input":{"file_path":"c:/work/app\\src\\a.ts"}}"#
+            ),
+            "\u{1b}]777;crucible;PermissionRequest;Write;src\\a.ts\u{7}"
+        );
+        assert_eq!(
+            ask(
+                r#"{"cwd":"C:\\Work\\App","tool_name":"Edit","tool_input":{"file_path":"C:\\Work\\Apple\\b.ts"}}"#
+            ),
+            "\u{1b}]777;crucible;PermissionRequest;Edit;C:\\Work\\Apple\\b.ts\u{7}",
+            "a sibling folder with the same prefix is not inside"
+        );
+        assert_eq!(
+            relative_to("C:\\Work\\Zoë\\x.ts", "c:\\work\\ZOË"),
+            "C:\\Work\\Zoë\\x.ts"
+        );
+        assert_eq!(
+            relative_to("C:\\Work\\Zoë\\x.ts", "C:\\Work\\Zoë\\"),
+            "x.ts"
+        );
+        assert_eq!(relative_to("C:\\Work", "C:\\Work"), "C:\\Work");
+        assert_eq!(
+            ask(r#"{"tool_name":"WebFetch","tool_input":{"url":"https://example.com"}}"#),
+            "\u{1b}]777;crucible;PermissionRequest;WebFetch;https://example.com\u{7}"
+        );
+    }
+    #[test]
+    fn hook_settings_run_this_executable_without_a_shell() {
+        let settings = claude_hook_settings_json("C:\\Program Files\\Crucible\\crucible.exe");
+        let hooks = settings["hooks"].as_object().unwrap();
+        assert_eq!(hooks.len(), CLAUDE_HOOK_EVENTS.len());
+        for event in CLAUDE_HOOK_EVENTS {
+            let hook = &hooks[event][0]["hooks"][0];
+            assert_eq!(hook["type"], "command");
+            assert_eq!(hook["command"], "C:\\Program Files\\Crucible\\crucible.exe");
+            assert_eq!(hook["args"], json!(["--crucible-hook", event]));
+        }
     }
 }
