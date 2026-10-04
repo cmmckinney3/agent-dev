@@ -284,3 +284,136 @@ test("reasons are cleaned and capped; elapsed time is short", () => {
   assert.equal(A.formatElapsed(2 * 3600000), "2h");
   assert.equal(A.formatElapsed(3 * 86400000), "3d");
 });
+
+test("Claude Code hook payloads: Crucible's own, read field by field", () => {
+  assert.equal(A.parseHook("notify;Build;done"), undefined);
+  assert.equal(A.parseHook("crucible"), undefined);
+  assert.deepEqual(A.parseHook("crucible;UserPromptSubmit;;"), {
+    kind: "prompt",
+  });
+  assert.deepEqual(A.parseHook("crucible;Stop;;"), { kind: "stop" });
+  assert.deepEqual(
+    A.parseHook("crucible;PermissionRequest;Bash;npm test; echo ok"),
+    {
+      kind: "waiting",
+      reason: "Allow Bash: npm test; echo ok?",
+    },
+  );
+  assert.deepEqual(A.parseHook("crucible;PermissionRequest;;"), {
+    kind: "waiting",
+    reason: "Allow a tool?",
+  });
+  assert.deepEqual(
+    A.parseHook("crucible;StopFailure;rate_limit;Rate limit exceeded"),
+    {
+      kind: "waiting",
+      reason: "Stopped by an error (rate limit): Rate limit exceeded",
+    },
+  );
+  assert.deepEqual(
+    A.parseHook(
+      "crucible;Notification;permission_prompt;Claude needs your permission to use Bash",
+    ),
+    {
+      kind: "waiting",
+      reason: "Claude needs your permission to use Bash",
+      soft: true,
+    },
+  );
+  assert.deepEqual(
+    A.parseHook("crucible;Notification;idle_prompt;Claude is waiting"),
+    {
+      kind: "idle",
+    },
+  );
+  assert.deepEqual(A.parseHook("crucible;Notification;auth_success;ok"), {
+    kind: "other",
+  });
+  assert.deepEqual(A.parseHook("crucible;SomethingNew;;"), { kind: "other" });
+  assert.ok(
+    A.parseHook(`crucible;PermissionRequest;Bash;${"x".repeat(500)}`).reason
+      .length <= A.REASON_MAX,
+  );
+});
+
+test("hooks drive a turn: prompt, permission held through redraws, answer, stop", () => {
+  let s = A.initialActivity(0, false);
+  s = A.onHook(s, 1000, { kind: "prompt" });
+  assert.equal(s.activity, "working");
+  assert.equal(s.turn, true);
+  assert.equal(s.hooked, true);
+  s = A.onHook(s, 2000, { kind: "waiting", reason: "Allow Write: src/a.ts?" });
+  assert.equal(s.activity, "waiting");
+  // The dialog drawing itself, and minutes of quiet, change nothing.
+  s = stream(s, 2100, 4000);
+  s = A.onTick(s, 60000, () => ["❯ 1. Yes"]);
+  assert.equal(s.activity, "waiting");
+  assert.equal(s.reason, "Allow Write: src/a.ts?");
+  // Claude Code's own notification about the same prompt keeps the better reason.
+  s = A.onHook(s, 61000, {
+    kind: "waiting",
+    reason: "Claude needs your permission to use Write",
+    soft: true,
+  });
+  assert.equal(s.reason, "Allow Write: src/a.ts?");
+  assert.equal(s.since, 2000);
+  s = A.onInput(s, 62000, "1");
+  assert.equal(s.activity, "idle");
+  assert.equal(s.held, undefined);
+  s = stream(s, 62500, 63000);
+  assert.equal(s.activity, "working", "the answered turn carries on");
+  s = A.onHook(s, 64000, { kind: "stop" });
+  assert.equal(s.activity, "done");
+  assert.equal(s.turn, false);
+  assert.equal(
+    s.since,
+    64000,
+    "Done the moment it stops, not after a quiet spell",
+  );
+});
+
+test("a hooked session's redraws are not work; only a turn is", () => {
+  let s = A.onHook(A.initialActivity(0, false), 0, { kind: "other" });
+  s = stream(s, 1000, 3000); // a long redraw with no prompt submitted
+  assert.equal(s.activity, "idle");
+  // Without hooks the same burst reads as work (the engine-neutral fallback).
+  assert.equal(
+    stream(A.initialActivity(0, false), 1000, 3000).activity,
+    "working",
+  );
+});
+
+test("Esc interrupts a hooked turn, which then ends with no Stop", () => {
+  let s = A.onHook(A.initialActivity(0, false), 0, { kind: "prompt" });
+  s = A.onInput(s, 1000, "\x1b");
+  assert.equal(s.activity, "idle");
+  assert.equal(s.turn, false);
+  s = stream(s, 1500, 3000); // "Interrupted · What should Claude do instead?"
+  assert.equal(s.activity, "idle");
+  // Rejecting a permission request with Esc is the same.
+  s = A.onHook(s, 4000, { kind: "prompt" });
+  s = A.onHook(s, 5000, { kind: "waiting", reason: "Allow Bash: rm x?" });
+  s = A.onInput(s, 6000, "\x1b");
+  assert.equal(s.activity, "idle");
+  s = stream(s, 6500, 8000);
+  assert.equal(s.activity, "idle");
+  // Esc in a session without hooks is just a key.
+  let plain = A.onInput(A.initialActivity(0, true), 1000, "\x1b");
+  assert.equal(plain.activity, "working");
+  assert.equal(plain.turn, true);
+});
+
+test("Claude Code's idle notification settles a turn the Stop hook missed; errors need you", () => {
+  let s = A.onHook(A.initialActivity(0, false), 0, { kind: "prompt" });
+  s = A.onHook(s, 70000, { kind: "idle" });
+  assert.equal(s.activity, "done");
+  const idle = A.onHook(A.initialActivity(0, false), 0, { kind: "idle" });
+  assert.equal(idle.activity, "idle");
+  const failed = A.onHook(s, 80000, {
+    kind: "waiting",
+    reason: "Stopped by an error (overloaded)",
+  });
+  assert.equal(failed.activity, "waiting");
+  assert.equal(failed.held, true);
+  assert.equal(A.onExit(failed, 90000, "Process exited").held, undefined);
+});

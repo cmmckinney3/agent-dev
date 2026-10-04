@@ -830,6 +830,16 @@ export default function SettingsPage({
             </select>
           </Row>
           <Row
+            label="Exact status from Claude Code"
+            hint="Interactive Claude Code sessions report when a turn starts, when it ends and when they need your permission, through hooks Crucible passes with --settings. Your own Claude Code settings are not changed. Off: status is read from the terminal, as for any other CLI."
+          >
+            <Toggle
+              checked={settings.claudeHooks}
+              label="Exact status from Claude Code"
+              onChange={(claudeHooks) => onChange({ claudeHooks })}
+            />
+          </Row>
+          <Row
             label="Confirm “Stop all”"
             hint="Killing every session asks once first."
           >

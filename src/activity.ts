@@ -26,6 +26,14 @@ export interface ActivityState {
   burstAt?: number;
   /** Output arrived while not working; the screen is checked once it settles. */
   unchecked: boolean;
+  /**
+   * The CLI reports through Crucible's Claude Code hooks (a hook event has
+   * arrived): a turn starts and ends when it says so, and output on its own is
+   * the interface redrawing, not work.
+   */
+  hooked?: boolean;
+  /** A hook said it needs you: only an answer, or another hook, moves it on. */
+  held?: boolean;
 }
 
 /** Output this soon after input or a resize is an echo or a redraw. */
@@ -132,18 +140,20 @@ const become = (
 ): ActivityState =>
   s.activity === activity && s.reason === reason
     ? s
-    : { ...s, activity, since, reason };
+    : { ...s, activity, since, reason, held: undefined };
 
 export function onOutput(s: ActivityState, now: number): ActivityState {
   const gap = now - s.lastOutputAt;
   const next: ActivityState = { ...s, lastOutputAt: now, outputSeen: true };
   if (s.activity === "working") return next;
+  // The permission dialog drawing itself is not the agent getting back to work.
+  if (s.held) return next;
   if (now - s.lastNudgeAt < ECHO_MS) return next;
   const burstAt =
     s.burstAt !== undefined && s.outputSeen && gap < BURST_GAP_MS
       ? s.burstAt
       : now;
-  if (s.turn || now - burstAt >= BURST_MS)
+  if (s.turn || (!s.hooked && now - burstAt >= BURST_MS))
     return {
       ...become(next, "working", now),
       burstAt: undefined,
@@ -160,10 +170,116 @@ export function onInput(
   const next: ActivityState = { ...s, lastNudgeAt: now };
   if (REPORT.test(data)) return next;
   if (/[\r\n]/.test(data)) next.turn = true;
+  // In Claude Code a lone Esc interrupts the turn (or rejects a permission
+  // request), and no Stop hook follows: the turn is over and was seen.
+  const interrupt = s.hooked && data === "\x1b";
+  if (interrupt) next.turn = false;
   // Answering a prompt, or typing into a finished pane, means it has been seen.
-  if (s.activity === "waiting" || s.activity === "done")
+  if (
+    s.activity === "waiting" ||
+    s.activity === "done" ||
+    (interrupt && s.activity === "working")
+  )
     return become(next, "idle", now);
   return next;
+}
+
+/**
+ * An event from Crucible's Claude Code hooks, read from an OSC 777 sequence
+ * (`crucible;<event>;<kind>;<text>`, written by desktop.rs).
+ */
+export type HookSignal =
+  | { kind: "prompt" }
+  | { kind: "stop" }
+  /** `soft`: a notification, which never replaces a more specific reason. */
+  | { kind: "waiting"; reason: string; soft?: boolean }
+  /** Claude Code's own "waiting for your input": the turn is long over. */
+  | { kind: "idle" }
+  | { kind: "other" };
+
+/** Notification types that mean Claude Code is blocked on the user. */
+const NEEDS_YOU = new Set([
+  "permission_prompt",
+  "elicitation_dialog",
+  "elicitation_url_dialog",
+  "agent_needs_input",
+]);
+
+/** The hook event an OSC 777 payload carries; undefined when it is not Crucible's. */
+export function parseHook(data: string): HookSignal | undefined {
+  const [tag, event, kind = "", ...rest] = data.split(";");
+  if (tag !== "crucible" || !event) return undefined;
+  const text = cleanReason(rest.join(";"));
+  const label = kind.replace(/_/g, " ").trim();
+  switch (event) {
+    case "UserPromptSubmit":
+      return { kind: "prompt" };
+    case "Stop":
+      return { kind: "stop" };
+    case "StopFailure":
+      return {
+        kind: "waiting",
+        reason: cleanReason(
+          `Stopped by an error${label ? ` (${label})` : ""}${text ? `: ${text}` : ""}`,
+        ),
+      };
+    case "PermissionRequest":
+      return {
+        kind: "waiting",
+        reason: cleanReason(
+          `Allow ${kind || "a tool"}${text ? `: ${text}` : ""}?`,
+        ),
+      };
+    case "Notification":
+      if (kind === "idle_prompt") return { kind: "idle" };
+      return NEEDS_YOU.has(kind)
+        ? {
+            kind: "waiting",
+            reason: text || "Claude Code needs your input",
+            soft: true,
+          }
+        : { kind: "other" };
+    default:
+      return { kind: "other" };
+  }
+}
+
+/** A hook event: the CLI says exactly what it is doing. */
+export function onHook(
+  s: ActivityState,
+  now: number,
+  signal: HookSignal,
+): ActivityState {
+  const next: ActivityState = { ...s, hooked: true };
+  switch (signal.kind) {
+    case "prompt":
+      return {
+        ...become(next, "working", s.activity === "working" ? s.since : now),
+        turn: true,
+        burstAt: undefined,
+        unchecked: false,
+      };
+    case "stop":
+      return { ...become(next, "done", now), turn: false, unchecked: false };
+    case "waiting":
+      if (signal.soft && s.activity === "waiting") return next;
+      return {
+        ...become(
+          next,
+          "waiting",
+          s.activity === "waiting" ? s.since : now,
+          signal.reason,
+        ),
+        held: true,
+        unchecked: false,
+      };
+    case "idle":
+      return s.activity === "working"
+        ? { ...become(next, s.turn ? "done" : "idle", now), turn: false }
+        : next;
+    default:
+      return next;
+  }
 }
 
 export const onResize = (s: ActivityState, now: number): ActivityState => ({

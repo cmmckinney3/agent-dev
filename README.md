@@ -68,6 +68,10 @@ Built with **Tauri (Rust) + React + TypeScript + xterm.js**.
   notifications for _Needs you_ and _Done_ are on while Crucible is in the
   background. Detection reads the terminal stream, so it works for any CLI, but
   it is a heuristic: a prompt worded unlike any known one shows as Done or Idle.
+  Interactive **Claude Code** sessions report exactly instead, through hooks
+  Crucible passes with `--settings` (your own Claude Code settings are
+  untouched): _Done_ the moment a turn ends, _Needs you_ the moment it asks
+  for permission, with the tool and what it wants to run or edit.
 - **Command palette** — `Ctrl Shift P` for projects, tasks, sessions and actions.
 - **Activity page** — searchable, paginated run history. Run counts and outcomes
   only; it is not token, cost or quota tracking.
@@ -185,7 +189,8 @@ real behaviour:
   deleting a card asks first, and the review instructions appended to every
   agent-review prompt (blank uses the built-in checklist).
 - **Workspace** — taskbar attention when a run finishes, desktop
-  notifications (off, while Crucible is in the background, or always), whether
+  notifications (off, while Crucible is in the background, or always), exact
+  status from Claude Code's hooks (on by default), whether
   **Stop all** asks first, and whether a broadcast presses Enter or just types
   the text into each pane.
 - **History & data** — record runs or not, how many to keep, clear the history,
@@ -247,7 +252,9 @@ wix-upgrade-code` prints both the derived and the pinned value.
 - `src/activity.ts` / `src/Dashboard.tsx` — the pure agent-activity model
   (Working / Needs you / Done / Idle, inferred from the terminal stream) and the
   Dashboard that groups every session by it. `src/desktopNotify.ts` sends the
-  desktop notifications.
+  desktop notifications. For Claude Code, hook events make it exact: Crucible's
+  executable is the hook (`crucible --crucible-hook <event>`), and its OSC 777
+  output reaches the pane through Claude Code's `terminalSequence`.
 - `src/storage.ts` / `src/workspace.ts` — the persistence funnel (debounced,
   serialized, failures always surfaced with a retry) and the `Workspace` model
   whose `normalizeWorkspace()` validates every untrusted blob before it can

@@ -429,6 +429,8 @@ fn kill_agent(state: State<AppState>, id: String) -> Result<(), String> {
     Ok(())
 }
 
+pub use desktop::hook_main;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -454,6 +456,7 @@ pub fn run() {
             desktop::create_worktree,
             desktop::seed_teammate_run,
             desktop::collect_teammate_run,
+            desktop::claude_hook_settings,
             desktop::save_window_state,
             desktop::export_backup,
             desktop::import_backup
