@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
+import { pureModules } from "./modules.mjs";
 
 // storage.ts is the only funnel for persistence, so its failure reporting is
 // what keeps "Changes could not be saved" from being a silent no-op.
@@ -18,16 +19,7 @@ export const isTauri = () => true;
 export const invoke = async (name, args) => { bridge.calls.push({ name, args }); return bridge.invoke(name, args); };
 `,
 );
-for (const name of [
-  "storage",
-  "workspace",
-  "layout",
-  "agents",
-  "settings",
-  "tasks",
-  "usage",
-  "teammates",
-]) {
+for (const name of pureModules()) {
   const source = readFileSync(
     new URL(`../src/${name}.ts`, import.meta.url),
     "utf8",

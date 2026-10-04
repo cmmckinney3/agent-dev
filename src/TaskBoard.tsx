@@ -36,7 +36,10 @@ export default function TaskBoard(p: Props) {
   const shown = p.tasks.filter(
     (t) =>
       Boolean(t.archived) === archive &&
-      (!agent || t.agentId === agent) &&
+      // A teammate's engine wins at launch, so it is the one to filter by.
+      (!agent ||
+        (p.teammates.find((m) => m.id === t.teammateId)?.agentId ??
+          t.agentId) === agent) &&
       `${t.title} ${t.prompt}`.toLowerCase().includes(query.toLowerCase()),
   );
   if (p.collapsed)

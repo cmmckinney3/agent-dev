@@ -17,9 +17,9 @@ const SNAPSHOT_LIMIT: usize = 16 * 1024 * 1024;
 const FILE_LIMIT: u64 = 1024 * 1024;
 const GIT_DETAIL_LIMIT: usize = 300;
 pub const LOG_LIMIT: u64 = 8 * 1024 * 1024;
-/// Most of a teammate's memory file read back after a run; the frontend caps
-/// the stored memory far below this.
-const MEMORY_READ_LIMIT: u64 = 256 * 1024;
+/// Most of a teammate run's memory or outbox file read back; the frontend
+/// caps what it keeps far below this.
+const TEAMMATE_READ_LIMIT: u64 = 256 * 1024;
 
 pub fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     #[cfg(debug_assertions)]
@@ -817,25 +817,37 @@ pub async fn create_worktree(
     .map_err(|e| e.to_string())?
 }
 
-/// A teammate's memory file inside a run's folder. Only a bare
-/// `[a-z0-9-]+.md` name is accepted, so the path cannot leave
-/// `<cwd>/.crucible/memory`.
-fn memory_file(cwd: &str, file: &str) -> Result<PathBuf, String> {
-    let stem = file.strip_suffix(".md").unwrap_or("");
-    let valid = !stem.is_empty()
-        && file.len() <= 80
-        && !stem.starts_with('-')
-        && stem
+/// Files a teammate run's folder may hold; nothing else is read or removed.
+const TEAMMATE_FILES: [&str; 3] = ["memory.md", "inbox.md", "outbox.md"];
+/// Seeding and removing run folders hold this, so removing an empty
+/// `.crucible` can never race another run creating its folder inside it.
+static TEAMMATE_LOCK: Mutex<()> = Mutex::new(());
+
+/// A teammate run's own folder, `<cwd>/.crucible/<folder>`. Only a bare
+/// `[a-z0-9-]` name is accepted, so the path cannot leave `.crucible`.
+fn teammate_dir(cwd: &str, folder: &str) -> Result<PathBuf, String> {
+    let valid = !folder.is_empty()
+        && folder.len() <= 80
+        && !folder.starts_with('-')
+        && folder
             .bytes()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-');
     if !valid {
-        return Err("Invalid memory file name".into());
+        return Err("Invalid teammate folder name".into());
     }
     let dir = Path::new(cwd);
     if !dir.is_dir() {
         return Err("The run's folder does not exist.".into());
     }
-    Ok(dir.join(".crucible").join("memory").join(file))
+    Ok(dir.join(".crucible").join(folder))
+}
+/// The folder exists and resolves inside the run's folder: a `.crucible` link
+/// pointing elsewhere must not redirect a write, a read or a removal.
+fn inside(dir: &Path, cwd: &str) -> bool {
+    fs::canonicalize(dir)
+        .ok()
+        .zip(fs::canonicalize(cwd).ok())
+        .is_some_and(|(d, root)| d.starts_with(root))
 }
 /// Keep `.crucible/` out of Git by adding it to the repository's
 /// `info/exclude` once. From a linked worktree Git names the shared file, so
@@ -869,46 +881,107 @@ fn exclude_crucible(cwd: &Path) {
     text.push_str(".crucible/\n");
     let _ = fs::write(&path, text);
 }
-fn seed_memory_inner(cwd: &str, file: &str, content: &str) -> Result<String, String> {
-    let path = memory_file(cwd, file)?;
+fn seed_teammate_run_inner(
+    cwd: &str,
+    folder: &str,
+    memory: &str,
+    inbox: Option<&str>,
+    outbox: bool,
+) -> Result<String, String> {
+    let dir = teammate_dir(cwd, folder)?;
     exclude_crucible(Path::new(cwd));
-    let dir = path.parent().ok_or("Invalid memory path")?;
-    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    // A `.crucible` link pointing elsewhere must not redirect the write.
-    let inside = fs::canonicalize(dir)
-        .ok()
-        .zip(fs::canonicalize(cwd).ok())
-        .is_some_and(|(d, root)| d.starts_with(root));
-    if !inside {
-        return Err("The memory folder resolves outside the run's folder.".into());
+    let _lock = TEAMMATE_LOCK
+        .lock()
+        .map_err(|_| "Teammate files are unavailable")?;
+    // Check `.crucible` before creating anything inside it, then the folder.
+    for path in [dir.parent().ok_or("Invalid teammate folder")?, &dir] {
+        fs::create_dir_all(path).map_err(|e| e.to_string())?;
+        if !inside(path, cwd) {
+            return Err("The teammate folder resolves outside the run's folder.".into());
+        }
     }
-    atomic_write(&path, content.as_bytes())?;
-    Ok(format!(".crucible/memory/{file}"))
+    atomic_write(&dir.join("memory.md"), memory.as_bytes())?;
+    if let Some(inbox) = inbox {
+        atomic_write(&dir.join("inbox.md"), inbox.as_bytes())?;
+    }
+    if outbox {
+        atomic_write(&dir.join("outbox.md"), b"")?;
+    }
+    Ok(format!(".crucible/{folder}"))
 }
-fn collect_memory_inner(cwd: &str, file: &str) -> Result<Option<String>, String> {
-    let path = memory_file(cwd, file)?;
-    let Ok(handle) = fs::File::open(&path) else {
+#[derive(Serialize, Debug, Default, PartialEq)]
+pub struct TeammateFiles {
+    memory: Option<String>,
+    outbox: Option<String>,
+}
+fn read_capped(path: &Path) -> Result<Option<String>, String> {
+    let Ok(handle) = fs::File::open(path) else {
         return Ok(None);
     };
     let mut bytes = Vec::new();
     handle
-        .take(MEMORY_READ_LIMIT)
+        .take(TEAMMATE_READ_LIMIT)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
     Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
 }
-/// Write a teammate's memory into the run's folder before it starts. Returns
-/// the path relative to that folder, which is what the prompt names.
-#[tauri::command]
-pub async fn seed_memory(cwd: String, file: String, content: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || seed_memory_inner(&cwd, &file, &content))
-        .await
-        .map_err(|e| e.to_string())?
+fn collect_teammate_run_inner(
+    cwd: &str,
+    folder: &str,
+    remove: bool,
+) -> Result<TeammateFiles, String> {
+    let dir = teammate_dir(cwd, folder)?;
+    if !dir.is_dir() {
+        return Ok(TeammateFiles::default());
+    }
+    if !inside(&dir, cwd) {
+        return Err("The teammate folder resolves outside the run's folder.".into());
+    }
+    let files = TeammateFiles {
+        memory: read_capped(&dir.join("memory.md"))?,
+        outbox: read_capped(&dir.join("outbox.md"))?,
+    };
+    if remove {
+        let _lock = TEAMMATE_LOCK
+            .lock()
+            .map_err(|_| "Teammate files are unavailable")?;
+        for name in TEAMMATE_FILES {
+            let _ = fs::remove_file(dir.join(name));
+        }
+        // Only empty folders go: anything else the teammate left stays put.
+        let _ = fs::remove_dir(&dir);
+        if let Some(parent) = dir.parent() {
+            let _ = fs::remove_dir(parent);
+        }
+    }
+    Ok(files)
 }
-/// Read a teammate's memory file back after its run; `None` when it is gone.
+/// Set up a teammate run's folder before it starts: its memory, the messages
+/// delivered to it and an empty outbox. Returns the folder relative to `cwd`,
+/// which is what the prompt names.
 #[tauri::command]
-pub async fn collect_memory(cwd: String, file: String) -> Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || collect_memory_inner(&cwd, &file))
+pub async fn seed_teammate_run(
+    cwd: String,
+    folder: String,
+    memory: String,
+    inbox: Option<String>,
+    outbox: bool,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        seed_teammate_run_inner(&cwd, &folder, &memory, inbox.as_deref(), outbox)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+/// Read a teammate run's memory and outbox back (`None` for a missing file);
+/// with `remove`, once the run is over, the folder is cleaned up.
+#[tauri::command]
+pub async fn collect_teammate_run(
+    cwd: String,
+    folder: String,
+    remove: bool,
+) -> Result<TeammateFiles, String> {
+    tauri::async_runtime::spawn_blocking(move || collect_teammate_run_inner(&cwd, &folder, remove))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -1324,39 +1397,90 @@ mod tests {
             .filter(|l| l.trim() == ".crucible/")
             .count()
     }
+    fn files(memory: Option<&str>, outbox: Option<&str>) -> TeammateFiles {
+        TeammateFiles {
+            memory: memory.map(String::from),
+            outbox: outbox.map(String::from),
+        }
+    }
     #[test]
-    fn memory_file_names_cannot_leave_the_memory_folder() {
+    fn teammate_folder_names_cannot_leave_the_crucible_folder() {
         let dir = fixture();
         let cwd = dir.to_str().unwrap();
         for bad in [
-            "", ".md", "-a.md", "A.md", "a b.md", "../a.md", "a/b.md", "a\\b.md", "a.txt",
-            "a.md.md", "a_b.md",
+            "", "-a", "A", "a b", "..", "../a", "a/b", "a\\b", "a.md", "a_b", "a\0",
         ] {
-            assert!(memory_file(cwd, bad).is_err(), "{bad:?} must be refused");
+            assert!(teammate_dir(cwd, bad).is_err(), "{bad:?} must be refused");
         }
-        assert!(memory_file(cwd, "front-end-ab12cd.md").is_ok());
-        assert!(memory_file(dir.join("missing").to_str().unwrap(), "a.md").is_err());
+        assert!(teammate_dir(cwd, &"a".repeat(81)).is_err());
+        assert!(teammate_dir(cwd, "front-end-ab12cd34").is_ok());
+        assert!(teammate_dir(dir.join("missing").to_str().unwrap(), "a").is_err());
     }
     #[test]
-    fn memory_round_trips_and_stays_out_of_git() {
+    fn a_teammate_run_round_trips_stays_out_of_git_and_is_removed_after() {
         let dir = fixture();
         init_repo(&dir);
         let cwd = dir.to_str().unwrap();
-        assert_eq!(collect_memory_inner(cwd, "ada-1.md").unwrap(), None);
-        let path = seed_memory_inner(cwd, "ada-1.md", "- prefers pnpm\n").unwrap();
-        assert_eq!(path, ".crucible/memory/ada-1.md");
-        seed_memory_inner(cwd, "ada-1.md", "- prefers pnpm\n- uses vitest\n").unwrap();
         assert_eq!(
-            collect_memory_inner(cwd, "ada-1.md").unwrap().as_deref(),
-            Some("- prefers pnpm\n- uses vitest\n")
+            collect_teammate_run_inner(cwd, "ada-1", false).unwrap(),
+            files(None, None)
         );
+        let path =
+            seed_teammate_run_inner(cwd, "ada-1", "- pnpm\n", Some("# Inbox"), true).unwrap();
+        assert_eq!(path, ".crucible/ada-1");
+        let folder = dir.join(".crucible").join("ada-1");
+        assert_eq!(
+            fs::read_to_string(folder.join("inbox.md")).unwrap(),
+            "# Inbox"
+        );
+        assert_eq!(fs::read_to_string(folder.join("outbox.md")).unwrap(), "");
+        // A second run of the same teammate has its own folder.
+        seed_teammate_run_inner(cwd, "ada-2", "- pnpm\n", None, false).unwrap();
+        assert!(!dir.join(".crucible/ada-2/inbox.md").exists());
+        assert!(!dir.join(".crucible/ada-2/outbox.md").exists());
+        fs::write(folder.join("memory.md"), "- pnpm\n- vitest\n").unwrap();
+        fs::write(folder.join("outbox.md"), "## To: Ben\nhello").unwrap();
         assert_eq!(exclude_lines(&dir), 1, "the exclude line is written once");
         assert_eq!(git(&dir, &["status", "--porcelain"]).unwrap(), "");
         let listed = git(&dir, &["ls-files", "--others", "--exclude-standard"]).unwrap();
         assert!(!listed.contains(".crucible"), "run snapshots never see it");
+        // Reading mid-run leaves everything in place.
+        let read = collect_teammate_run_inner(cwd, "ada-1", false).unwrap();
+        assert_eq!(
+            read,
+            files(Some("- pnpm\n- vitest\n"), Some("## To: Ben\nhello"))
+        );
+        assert!(folder.join("outbox.md").exists());
+        // After the run its folder goes; the other run's stays, so `.crucible` does too.
+        assert_eq!(
+            collect_teammate_run_inner(cwd, "ada-1", true).unwrap(),
+            read
+        );
+        assert!(!folder.exists());
+        assert!(dir.join(".crucible/ada-2/memory.md").exists());
+        collect_teammate_run_inner(cwd, "ada-2", true).unwrap();
+        assert!(
+            !dir.join(".crucible").exists(),
+            "an empty .crucible goes too"
+        );
     }
     #[test]
-    fn memory_seeded_into_a_worktree_is_excluded_for_the_whole_repository() {
+    fn removal_keeps_files_the_teammate_added() {
+        let dir = fixture();
+        let cwd = dir.to_str().unwrap();
+        seed_teammate_run_inner(cwd, "ada-1", "note", None, true).unwrap();
+        let folder = dir.join(".crucible/ada-1");
+        fs::write(folder.join("scratch.txt"), "mine").unwrap();
+        collect_teammate_run_inner(cwd, "ada-1", true).unwrap();
+        assert!(!folder.join("memory.md").exists());
+        assert!(!folder.join("outbox.md").exists());
+        assert_eq!(
+            fs::read_to_string(folder.join("scratch.txt")).unwrap(),
+            "mine"
+        );
+    }
+    #[test]
+    fn a_teammate_run_in_a_worktree_is_excluded_for_the_whole_repository() {
         let dir = fixture();
         init_repo(&dir);
         let target = fixture().join("lane");
@@ -1372,20 +1496,20 @@ mod tests {
             ],
         )
         .unwrap();
-        seed_memory_inner(target.to_str().unwrap(), "ada-1.md", "note").unwrap();
-        seed_memory_inner(dir.to_str().unwrap(), "ada-1.md", "note").unwrap();
+        seed_teammate_run_inner(target.to_str().unwrap(), "ada-1", "note", None, true).unwrap();
+        seed_teammate_run_inner(dir.to_str().unwrap(), "ada-2", "note", None, true).unwrap();
         assert_eq!(exclude_lines(&dir), 1);
         assert_eq!(git(&target, &["status", "--porcelain"]).unwrap(), "");
         assert_eq!(git(&dir, &["status", "--porcelain"]).unwrap(), "");
     }
     #[test]
-    fn memory_outside_a_repository_still_round_trips() {
+    fn a_teammate_run_outside_a_repository_still_round_trips() {
         let dir = fixture();
         let cwd = dir.to_str().unwrap();
-        seed_memory_inner(cwd, "ada-1.md", "note").unwrap();
+        seed_teammate_run_inner(cwd, "ada-1", "note", None, false).unwrap();
         assert_eq!(
-            collect_memory_inner(cwd, "ada-1.md").unwrap().as_deref(),
-            Some("note")
+            collect_teammate_run_inner(cwd, "ada-1", true).unwrap(),
+            files(Some("note"), None)
         );
     }
 }

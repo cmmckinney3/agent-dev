@@ -452,8 +452,8 @@ pub fn run() {
             desktop::check_agent,
             desktop::read_run,
             desktop::create_worktree,
-            desktop::seed_memory,
-            desktop::collect_memory,
+            desktop::seed_teammate_run,
+            desktop::collect_teammate_run,
             desktop::save_window_state,
             desktop::export_backup,
             desktop::import_backup

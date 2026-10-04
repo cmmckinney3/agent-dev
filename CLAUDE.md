@@ -11,7 +11,8 @@ prompt and tracks them through Backlog → Running → Review → Done. Work is
 organized into **projects** (name, folder, preferred agents, saved layout), and a
 completed run keeps its saved output and Git diff so it can be reviewed after a
 restart. **Teammates** are saved, named agents with a brief and their own memory,
-which follows them from project to project. Four pages share the shell:
+which follows them from project to project, and they can message each other
+through files in a run's folder. Four pages share the shell:
 Workspace (panes + board), Teammates, Activity (per-run history), and Settings.
 
 Stack: **Tauri 2 (Rust) + React 19 + TypeScript + xterm.js**, no backend server, no
@@ -32,7 +33,8 @@ npm run tauri build      # produce a standalone installer
   browser runtime: the tests transpile the pure TS modules with `typescript` and
   stub the native bridge, so anything worth pinning belongs in a pure module
   (`workspace.ts`, `tasks.ts`, `layout.ts`, `sessions.ts`, `storage.ts`) rather
-  than inside a component.
+  than inside a component. `tests/modules.mjs` lists every `src/*.ts` for that
+  transpile step, so a module gaining an import needs no test-file changes.
 - There is **no lint config**. `npm run build`'s `tsc` step (strict mode,
   `noUnusedLocals`/`noUnusedParameters`) is the other frontend safety net — run it
   after any non-trivial TS edit.
@@ -52,7 +54,7 @@ npm run tauri build      # produce a standalone installer
 (`spawn_agent`, `write_to_agent`, `resize_agent`, `kill_agent`, `wait_for_saves`);
 `src-tauri/src/desktop.rs` is everything else the desktop owns — `load_workspace`,
 `save_workspace`, `project_info`, `check_agent`, `read_run`, `create_worktree`,
-`seed_memory`, `collect_memory`, `export_backup`, `import_backup`,
+`seed_teammate_run`, `collect_teammate_run`, `export_backup`, `import_backup`,
 `save_window_state`.
 Each spawn opens a `portable-pty` pseudo-terminal, resolves the program (a Windows npm
 cmd-shim is launched as `node <script>` directly, since `cmd.exe` would reparse the
@@ -163,17 +165,38 @@ failing the whole load. Portable backups are redacted by default.
   is the prompt every launch sends (the request plus any pending `changeRequest`):
   launch paths must use it, never `task.prompt` directly.
 - `src/teammates.ts` — pure model for teammates (`Teammate`: name, engine
-  `agentId`, brief, memory). `teammatePrompt` is the preface a teammate's run
-  sends (who it is, its brief, where its memory file is, then the task);
-  `memoryFileName` the file's safe slug; `mergeMemory` folds a run's file back
-  into the stored memory: an untouched store takes the file as is (so the
-  teammate can prune), an edited one only gains the lines the run added; capped
-  at `MEMORY_MAX`, oldest lines first. **The memory never travels as argv** — it
-  is agent-written and can hold anything. `startTask` writes it into the run's
-  folder with `seed_memory` (`.crucible/memory/<slug>.md`, `.crucible/` added to
-  the repository's `info/exclude`, so it never shows in Git, diffs or reviews)
-  and `collect_memory` reads it back when the run ends. A teammate's engine wins
-  over the task's `agentId` at launch. `src/TeammatesPage.tsx` is the page.
+  `agentId`, brief, memory, `canMessage`, `onMessage`). `teammatePrompt` is the
+  preface a teammate's run sends (who it is, its brief, where its memory, inbox
+  and outbox are, then the task); `runFolder` names the run's own folder;
+  `mergeMemory` folds a run's memory file back into the stored memory: an
+  untouched store takes the file as is (so the teammate can prune), an edited
+  one only gains the lines the run added; capped at `MEMORY_MAX`, oldest lines
+  first. **The memory never travels as argv** — it is agent-written and can hold
+  anything. Names may not hold `" % ! ^ & | < >`, since they go into every
+  teammate's prompt. `startTask` sets up `.crucible/<name>-<run id tail>/` in
+  the run's folder with `seed_teammate_run` (`memory.md`, `inbox.md` when
+  messages are delivered, an empty `outbox.md`; `.crucible/` is added to the
+  repository's `info/exclude`, so it never shows in Git, diffs or reviews) and
+  `collect_teammate_run` reads it back and removes it when the run ends. One
+  folder per run, so two runs of one teammate never share a file. A teammate's
+  engine wins over the task's `agentId` at launch. `src/TeammatesPage.tsx` is
+  the page (Profile, Memory, Messages, Work tabs).
+- `src/messages.ts` — pure model for teammate messaging (`TeamMessage`, from a
+  teammate or `OWNER`). `readOutbox` turns a run's `outbox.md` into messages
+  (one per `## To: <name>` heading; `everyone` reaches the team; unknown names
+  are reported; at most `SEND_MAX` a run, never the same one twice). App reads
+  the outbox when the pane's activity leaves Working (a turn ended) and when the
+  run ends. `messagesToDeliver` and `inboxText` build the next run's `inbox.md`
+  (oldest first, the recipient's own last message to a sender quoted for
+  context); messages are marked delivered once the process starts. **Bodies
+  never travel as argv**, same as memory. `arrival` decides whether a message
+  starts a task: the recipient's `onMessage` is `start`, Settings →
+  `messageStarts` is on, and its `hop` is within `messageChainLimit` (a message
+  from a message-started run is one hop deeper). `messageTaskFor` makes that
+  task (headless, in the sender's folder, `messageIds` and `hop` on the task);
+  `pendingMessageTask` finds an unstarted one to join instead, and
+  `messageTaskWaits` holds a message task while its teammate already has a run
+  in that folder.
 - `src/review.ts` — pure (no React, no Tauri) model for agent review.
   `buildReviewPrompt` builds the reviewer prompt, `reviewTaskFor` the linked
   headless `Review: <title>` task (`reviewOf` points at the reviewed task),
@@ -253,6 +276,8 @@ keys. That path only works while the identifier stays the same.
 - `docs/agent-status-plan.md` — the agent status, Dashboard and notifications
   plan (phase 1 built; phases 1b–3 listed).
 - `docs/teammates-plan.md` — teammates and per-teammate memory.
+- `docs/messaging-plan.md` — messages between teammates: the file channel,
+  delivery, message-started tasks and the chain limit.
 - `docs/bridgemind-research.md` — what BridgeMind (the inspiration) ships as of
   October 2026, the gap with Crucible, and the direction chosen from it.
 - `docs/development-checkpoint.md` — running record of what is implemented and

@@ -14,12 +14,26 @@ import SplitDivider from "./SplitDivider";
 import Dashboard, { DashboardRow } from "./Dashboard";
 import { ACTIVITY_LABELS, ActivityState } from "./activity";
 import { notifyDesktop } from "./desktopNotify";
+import { Teammate, mergeMemory, runFolder, teammatePrompt } from "./teammates";
 import {
-  Teammate,
-  memoryFileName,
-  mergeMemory,
-  teammatePrompt,
-} from "./teammates";
+  arrival,
+  Arrival,
+  draftKey,
+  inboxText,
+  messagesToDeliver,
+  messageTaskFor,
+  messageTaskTitle,
+  messageTaskWaits,
+  nextHop,
+  OWNER,
+  pendingMessageTask,
+  readOutbox,
+  retainMessages,
+  senderName,
+  TeamMessage,
+  tidyBody,
+  waitingFor,
+} from "./messages";
 import {
   AgentDraft,
   enabledAgents,
@@ -115,6 +129,7 @@ import {
 } from "./icons";
 import "./App.css";
 import "./Premium.css";
+import type { TeammateFocus, TeammateTab } from "./TeammatesPage";
 const UsagePage = lazy(() => import("./UsagePage"));
 const SettingsPage = lazy(() => import("./SettingsPage"));
 const TeammatesPage = lazy(() => import("./TeammatesPage"));
@@ -137,6 +152,23 @@ interface Toast {
   action?: () => void;
   label?: string;
 }
+/** A teammate's run in progress: what its folder holds and what it has sent. */
+interface TeamRun {
+  teammateId: string;
+  cwd: string;
+  /** Its folder under `.crucible` (runFolder). */
+  folder: string;
+  /** The memory as seeded, so the merge can tell its edits from the owner's. */
+  seeded: string;
+  /** It has an outbox to read. */
+  outbox: boolean;
+  /** The hop its messages carry (see messages.ts). */
+  hop: number;
+  projectId?: string;
+  /** Keys of messages already sent, and outbox problems already reported. */
+  sent: Set<string>;
+  reported: Set<string>;
+}
 
 export default function App({
   initial,
@@ -155,17 +187,11 @@ export default function App({
   /** A pane opened from the Dashboard; `n` restarts the ring animation. */
   const [flash, setFlash] = useState<{ id: string; n: number }>();
   /** The teammate the Teammates page should show, when opened from elsewhere. */
-  const [teammateFocus, setTeammateFocus] = useState<string>();
-  /**
-   * Memory written into a teammate run's folder, by run id: what was seeded,
-   * so the merge after the run can tell the teammate's edits from the owner's.
-   */
-  const memorySeeds = useRef(
-    new Map<
-      string,
-      { teammateId: string; cwd: string; file: string; seeded: string }
-    >(),
-  );
+  const [teammateFocus, setTeammateFocus] = useState<TeammateFocus>();
+  /** Teammate runs in progress, by run id. */
+  const teamRuns = useRef(new Map<string, TeamRun>());
+  /** Reads of teammate runs still in flight; closing waits for them. */
+  const collecting = useRef(new Set<Promise<void>>());
   const [expanded, setExpanded] = useState<string>();
   const [agentManager, setAgentManager] = useState(false);
   const [palette, setPalette] = useState(false);
@@ -432,8 +458,9 @@ export default function App({
           // The output log is synced before agent-exit is sent, so it is
           // complete by now.
           if (event.status === "exited") void readVerdict(event.run);
-          // A stopped run may still have learned something; collect either way.
-          void collectMemory(event.run.id);
+          // A stopped run may still have learned something or written to a
+          // teammate; collect either way.
+          void collectTeamRun(event.run.id, true);
         }
       }),
     [],
@@ -447,6 +474,17 @@ export default function App({
         else delete next[id];
         return next;
       });
+      // A teammate that finished a turn (or stopped to ask) may have written
+      // to its outbox: deliver now rather than when the whole run ends.
+      // (An ended run is collected by its exit event instead.)
+      const live = sessionRun(id);
+      if (
+        state &&
+        state.activity !== "working" &&
+        live &&
+        sessionState(id) === "running"
+      )
+        void collectTeamRun(live.id, false);
       // Done stays until the pane is clicked or typed in: every launch focuses
       // its terminal, so "the active pane" is no proof anyone saw it finish.
       if (!state || (state.activity !== "waiting" && state.activity !== "done"))
@@ -542,51 +580,271 @@ export default function App({
     else if (problem) notify(problem, () => showTask(review.id), "Open review");
   };
 
-  const openTeammate = (id?: string) => {
-    setTeammateFocus(id);
+  const openTeammate = (id?: string, tab?: TeammateTab) => {
+    setTeammateFocus({ id, tab, n: Date.now() });
     setPage("teammates");
     setDetail(undefined);
     setRunDetail(undefined);
   };
   /**
-   * A teammate's run ended: read its memory file back and fold it into the
-   * stored memory (see mergeMemory for how edits on both sides are kept).
+   * Read a teammate run's folder. Mid-run (`final` false) only the outbox
+   * matters: new messages are sent. When the run ends its memory is folded
+   * back too (see mergeMemory for how edits on both sides are kept) and the
+   * folder is removed.
    */
-  const collectMemory = async (runId: string) => {
-    const seed = memorySeeds.current.get(runId);
-    if (!seed) return;
-    memorySeeds.current.delete(runId);
-    let returned: string | null = null;
+  const collectTeamRun = (runId: string, final: boolean) => {
+    const job = readTeamRun(runId, final);
+    collecting.current.add(job);
+    void job.finally(() => collecting.current.delete(job));
+    return job;
+  };
+  const readTeamRun = async (runId: string, final: boolean) => {
+    const team = teamRuns.current.get(runId);
+    if (!team || (!final && !team.outbox)) return;
+    if (final) teamRuns.current.delete(runId);
+    const name = () =>
+      latest.current.teammates.find((t) => t.id === team.teammateId)?.name ??
+      "The teammate";
+    let files: { memory: string | null; outbox: string | null };
     try {
-      returned = await invoke<string | null>("collect_memory", {
-        cwd: seed.cwd,
-        file: seed.file,
-      });
+      files = await invoke<{ memory: string | null; outbox: string | null }>(
+        "collect_teammate_run",
+        {
+          cwd: team.cwd,
+          folder: team.folder,
+          remove: final,
+        },
+      );
     } catch (e) {
-      const name = latest.current.teammates.find(
-        (t) => t.id === seed.teammateId,
-      )?.name;
-      notify(`Could not read ${name ?? "the teammate"}'s memory: ${String(e)}`);
+      if (final) notify(`Could not read ${name()}'s memory: ${String(e)}`);
       return;
     }
-    const mate = latest.current.teammates.find((t) => t.id === seed.teammateId);
-    if (!mate) return;
-    const merged = mergeMemory(seed.seeded, mate.memory, returned);
-    if (!merged.changed) return;
-    change((v) => ({
-      ...v,
-      teammates: v.teammates.map((t) =>
-        t.id === mate.id
-          ? { ...t, memory: merged.memory, memoryUpdatedAt: Date.now() }
-          : t,
-      ),
-    }));
-    notify(
-      `${mate.name}'s memory was updated${merged.trimmed ? "; the oldest notes were dropped to fit" : ""}.`,
-      () => openTeammate(mate.id),
-      "View memory",
+    const mate = latest.current.teammates.find((t) => t.id === team.teammateId);
+    let memoryNote: string | undefined;
+    if (final && mate) {
+      const merged = mergeMemory(team.seeded, mate.memory, files.memory);
+      if (merged.changed) {
+        change((v) => ({
+          ...v,
+          teammates: v.teammates.map((t) =>
+            t.id === mate.id
+              ? { ...t, memory: merged.memory, memoryUpdatedAt: Date.now() }
+              : t,
+          ),
+        }));
+        memoryNote = `${mate.name}'s memory was updated${merged.trimmed ? "; the oldest notes were dropped to fit" : ""}.`;
+      }
+    }
+    // There is one toast: messages sent now carry the memory note with them.
+    const sent =
+      team.outbox && files.outbox
+        ? postOutbox(runId, team, files.outbox, memoryNote)
+        : false;
+    if (!sent && memoryNote && mate)
+      notify(memoryNote, () => openTeammate(mate.id, "memory"), "View memory");
+  };
+  /** Send what a run wrote in its outbox since it was last read. */
+  const postOutbox = (
+    runId: string,
+    team: TeamRun,
+    text: string,
+    note?: string,
+  ): boolean => {
+    const state = latest.current;
+    const sender = state.teammates.find((t) => t.id === team.teammateId);
+    if (!sender) return false;
+    const read = readOutbox(text, sender, state.teammates, team.sent);
+    for (const draft of read.drafts) team.sent.add(draftKey(draft));
+    const problems = read.problems.filter((p) => !team.reported.has(p));
+    problems.forEach((p) => team.reported.add(p));
+    if (!read.drafts.length && !problems.length) return false;
+    const now = Date.now();
+    sendMessages(
+      read.drafts.map((draft) => ({
+        id: newId("message"),
+        from: sender.id,
+        fromName: sender.name,
+        to: draft.to,
+        body: draft.body,
+        at: now,
+        projectId: team.projectId,
+        cwd: team.cwd,
+        runId,
+        hop: team.hop,
+      })),
+      sender.name,
+      problems,
+      false,
+      note,
+    );
+    return true;
+  };
+  /**
+   * Put messages in their recipients' inboxes and start a task for each
+   * recipient that asks for one (see `arrival`), then say what happened in one
+   * toast. `force` starts tasks whatever the recipients' settings (the owner
+   * asked for it).
+   */
+  const sendMessages = (
+    messages: TeamMessage[],
+    fromName: string,
+    problems: string[] = [],
+    force = false,
+    note?: string,
+  ) => {
+    const state = latest.current;
+    const fallback = state.projects.find(
+      (p) => p.id === state.activeProjectId,
+    )!;
+    const tasks = [...state.tasks];
+    const fresh: Task[] = [];
+    const notes: string[] = [];
+    const taskOf = new Map<string, string>();
+    for (const to of [...new Set(messages.map((m) => m.to))]) {
+      const mate = state.teammates.find((t) => t.id === to);
+      if (!mate) continue;
+      const group = messages.filter((m) => m.to === to);
+      const hop = Math.max(...group.map((m) => m.hop));
+      const how: Arrival = force ? "start" : arrival(mate, hop, state.settings);
+      if (how !== "start") {
+        notes.push(
+          `${mate.name}: ${
+            how === "paused"
+              ? "waits (Settings has paused message tasks)"
+              : how === "chain"
+                ? `waits (this chain of messages reached its limit of ${state.settings.messageChainLimit})`
+                : "waits for its next task"
+          }`,
+        );
+        continue;
+      }
+      const project =
+        state.projects.find((p) => p.id === group[0].projectId) ?? fallback;
+      const where = {
+        projectId: project.id,
+        cwd: group[0].projectId === project.id ? group[0].cwd : undefined,
+      };
+      const pending = pendingMessageTask(tasks, mate.id, where);
+      if (pending) {
+        const ids = [...(pending.messageIds ?? []), ...group.map((m) => m.id)];
+        const all = [
+          ...state.messages.filter((m) => pending.messageIds?.includes(m.id)),
+          ...group,
+        ];
+        const merged: Task = {
+          ...pending,
+          messageIds: ids,
+          hop: Math.max(pending.hop ?? 1, hop),
+          title: messageTaskTitle(
+            all.map((m) =>
+              m.from === OWNER ? "you" : senderName(m, state.teammates),
+            ),
+            ids.length,
+          ),
+        };
+        tasks[tasks.indexOf(pending)] = merged;
+        group.forEach((m) => taskOf.set(m.id, merged.id));
+        notes.push(`${mate.name}: added to its waiting task`);
+        continue;
+      }
+      const task = messageTaskFor(mate, group, state.teammates, where, {
+        id: newId("task"),
+        now: Date.now(),
+      });
+      tasks.push(task);
+      fresh.push(task);
+      group.forEach((m) => taskOf.set(m.id, task.id));
+      notes.push(
+        `${mate.name}: ${
+          messageTaskWaits(task, tasks, state.projects)
+            ? "task queued until its current one ends"
+            : "task created"
+        }`,
+      );
+    }
+    // A message sent again (a task started by hand) is updated in place.
+    const updated = new Map(
+      messages.map((m) => [
+        m.id,
+        taskOf.has(m.id) ? { ...m, taskId: taskOf.get(m.id) } : m,
+      ]),
+    );
+    change((v) => {
+      const known = new Set(v.messages.map((m) => m.id));
+      return {
+        ...v,
+        tasks,
+        messages: retainMessages([
+          ...v.messages.map((m) => updated.get(m.id) ?? m),
+          ...[...updated.values()].filter((m) => !known.has(m.id)),
+        ]),
+      };
+    });
+    for (const task of fresh) void startTask(task.id);
+    const first = messages[0];
+    const opened = first && taskOf.get(first.id);
+    const count =
+      messages.length === 1 ? "Message" : `${messages.length} messages`;
+    const text = [
+      messages.length ? `${count} from ${fromName}. ${notes.join("; ")}.` : "",
+      problems.length ? `Not delivered: ${problems.join(" ")}` : "",
+      note ?? "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    if (opened) notify(text, () => showTask(opened), "Open task");
+    else if (first)
+      notify(text, () => openTeammate(first.to, "messages"), "View");
+    else
+      notify(
+        `${fromName}'s outbox: ${text}`,
+        () =>
+          openTeammate(
+            state.teammates.find((t) => t.name === fromName)?.id,
+            "messages",
+          ),
+        "View",
+      );
+  };
+  /** The owner writes to a teammate from its page. */
+  const sendOwnerMessage = (to: string, text: string) => {
+    const body = tidyBody(text);
+    const state = latest.current;
+    const p = state.projects.find((p) => p.id === state.activeProjectId);
+    if (!body || !state.teammates.some((t) => t.id === to)) return;
+    sendMessages(
+      [
+        {
+          id: newId("message"),
+          from: OWNER,
+          fromName: "You",
+          to,
+          body,
+          at: Date.now(),
+          projectId: p?.id,
+          cwd: p?.cwd || undefined,
+          hop: 1,
+        },
+      ],
+      "you",
     );
   };
+  /** Start a task for a waiting message now, whatever the recipient's setting. */
+  const startFromMessage = (id: string) => {
+    const message = latest.current.messages.find((m) => m.id === id);
+    const task = latest.current.tasks.find((t) => t.id === message?.taskId);
+    if (!message || message.deliveredAt || (task && !task.archived)) return;
+    sendMessages(
+      [message],
+      message.from === OWNER
+        ? "you"
+        : senderName(message, latest.current.teammates),
+      [],
+      true,
+    );
+  };
+  const deleteMessage = (id: string) =>
+    change((v) => ({ ...v, messages: v.messages.filter((m) => m.id !== id) }));
 
   const slotProject = (id: string) =>
     latest.current.projects.find((p) => paneIds(p.layout).includes(id));
@@ -769,6 +1027,11 @@ export default function App({
       notify(`${dependency}. Queued to start when they finish.`);
       return;
     }
+    if (messageTaskWaits(task, state.tasks, state.projects)) {
+      // The teammate is busy in this folder; the drain starts it afterwards.
+      patchTask(id, { queued: true, status: "backlog" });
+      return;
+    }
     const bound = new Set(state.tasks.map((t) => t.paneId).filter(Boolean));
     const concurrent = state.tasks.filter(
       (t) =>
@@ -819,31 +1082,73 @@ export default function App({
           });
         return;
       }
-      let prompt = launchPrompt(task);
-      let seed: { file: string; seeded: string } | undefined;
+      const request = launchPrompt(task);
+      let prompt = request;
+      const runId = newId("run");
+      let delivered: TeamMessage[] = [];
       if (mate) {
-        // The memory goes into a file in the run's folder, never into argv;
-        // the prompt only says where it is.
-        const file = memoryFileName(mate);
-        await invoke("seed_memory", { cwd, file, content: mate.memory });
-        seed = { file, seeded: mate.memory };
-        prompt = teammatePrompt(mate, prompt);
+        // Memory and messages go into files in the run's own folder, never
+        // into argv; the prompt only says where they are.
+        const now = latest.current;
+        const folder = runFolder(mate, runId);
+        const team = now.teammates
+          .filter((t) => t.id !== mate.id)
+          .map((t) => t.name);
+        const outbox = mate.canMessage && team.length > 0;
+        delivered = messagesToDeliver(now.messages, mate.id, task.messageIds);
+        await invoke("seed_teammate_run", {
+          cwd,
+          folder,
+          memory: mate.memory,
+          inbox: delivered.length
+            ? inboxText(
+                mate,
+                delivered,
+                now.messages,
+                now.teammates,
+                now.projects,
+              )
+            : null,
+          outbox,
+        });
+        teamRuns.current.set(runId, {
+          teammateId: mate.id,
+          cwd,
+          folder,
+          seeded: mate.memory,
+          outbox,
+          hop: nextHop(task),
+          projectId: p.id,
+          sent: new Set(),
+          reported: new Set(),
+        });
+        prompt = teammatePrompt(mate, request, {
+          folder,
+          inbox: delivered.length,
+          team: outbox ? team : [],
+        });
       }
       const run = createRun(
         slot,
         a.id,
         cwd,
         task,
-        mate ? { prompt, teammateId: mate.id, teammateName: mate.name } : {},
+        mate
+          ? {
+              id: runId,
+              prompt,
+              request,
+              teammateId: mate.id,
+              teammateName: mate.name,
+            }
+          : { id: runId },
       );
-      if (mate && seed)
-        memorySeeds.current.set(run.id, { teammateId: mate.id, cwd, ...seed });
       recordRun(run);
       patchProject(p.id, (value) => ({
         ...value,
         slotAgents: { ...value.slotAgents, [slot]: a.id },
       }));
-      await startSession(
+      const started = await startSession(
         slot,
         {
           program: a.program,
@@ -855,6 +1160,21 @@ export default function App({
         },
         state.settings,
       );
+      if (started && delivered.length) {
+        const ids = new Set(delivered.map((m) => m.id));
+        const at = Date.now();
+        change((v) => ({
+          ...v,
+          messages: v.messages.map((m) =>
+            ids.has(m.id)
+              ? { ...m, deliveredAt: at, deliveredRunId: run.id }
+              : m,
+          ),
+        }));
+      }
+      // A launch that never became the pane's run is cleaned up here; one that
+      // failed to spawn was already collected by its exit event (a no-op now).
+      if (!started) void collectTeamRun(run.id, true);
     } catch (e) {
       patchTask(id, {
         status: "backlog",
@@ -880,6 +1200,7 @@ export default function App({
       const p = w.projects.find((p) => p.id === t.projectId);
       return (
         p &&
+        !messageTaskWaits(t, w.tasks, w.projects) &&
         paneIds(p.layout).some(
           (id) =>
             !isBusy(sessionState(id)) &&
@@ -1009,6 +1330,8 @@ export default function App({
           changeRequest: undefined,
           reviewOf: undefined,
           verdict: undefined,
+          messageIds: undefined,
+          hop: undefined,
           createdAt: Date.now(),
         },
       ],
@@ -1355,6 +1678,8 @@ export default function App({
           .flatMap((p) => paneIds(p.layout))
           .map(stopSession),
       );
+      // Stopped teammate runs still hand back their memory and messages.
+      await Promise.allSettled([...collecting.current]);
       await invoke("wait_for_saves");
       await invoke("save_window_state");
       scheduleSave(latest.current);
@@ -1462,6 +1787,8 @@ export default function App({
       agentId: available[0].id,
       brief: "",
       memory: "",
+      canMessage: true,
+      onMessage: "hold",
       createdAt: Date.now(),
     };
     change((v) => ({ ...v, teammates: [...v.teammates, mate] }));
@@ -1486,7 +1813,7 @@ export default function App({
     if (
       isTauri() &&
       !(await confirm(
-        `Delete ${mate.name} and its memory? Tasks it was assigned keep their engine.`,
+        `Delete ${mate.name}, its memory and the messages sent to it? Tasks it was assigned keep their engine.`,
         { title: "Delete teammate", kind: "warning" },
       ))
     )
@@ -1494,9 +1821,20 @@ export default function App({
     change((v) => ({
       ...v,
       teammates: v.teammates.filter((t) => t.id !== id),
-      tasks: v.tasks.map((t) =>
-        t.teammateId === id ? { ...t, teammateId: undefined } : t,
-      ),
+      // Its messages go with it; what it sent stays with the recipients.
+      messages: v.messages.filter((m) => m.to !== id),
+      tasks: v.tasks.map((t) => {
+        if (t.teammateId !== id) return t;
+        // A message task that has not run has nobody left to read its inbox.
+        const orphan =
+          Boolean(t.messageIds) && t.status === "backlog" && !t.paneId;
+        return {
+          ...t,
+          teammateId: undefined,
+          archived: t.archived || orphan,
+          queued: orphan ? false : t.queued,
+        };
+      }),
     }));
   };
   const saveAgent = (draft: AgentDraft, id?: string) =>
@@ -1627,6 +1965,10 @@ export default function App({
   const waitingCount = dashboardRows.filter(
     (r) => r.activity.activity === "waiting",
   ).length;
+  const inboxCount = w.teammates.reduce(
+    (n, t) => n + waitingFor(w.messages, t.id),
+    0,
+  );
 
   return (
     <div className="app premium-app">
@@ -1683,6 +2025,15 @@ export default function App({
                   <SettingsIcon />
                 )}
                 {p[0].toUpperCase() + p.slice(1)}
+                {p === "teammates" && inboxCount > 0 && (
+                  <b
+                    className="count-badge"
+                    title={`${inboxCount} message${inboxCount === 1 ? "" : "s"} waiting for teammates`}
+                  >
+                    {inboxCount}
+                    <span className="sr-only"> waiting</span>
+                  </b>
+                )}
               </button>
             ),
           )}
@@ -2268,11 +2619,16 @@ export default function App({
             agents={w.agents}
             tasks={w.tasks}
             runs={w.usage}
+            messages={w.messages}
+            projects={w.projects}
             focus={teammateFocus}
             onAdd={addTeammate}
             onUpdate={updateTeammate}
             onDelete={(id) => void deleteTeammate(id)}
             onOpenTask={showTask}
+            onSend={sendOwnerMessage}
+            onStartMessage={startFromMessage}
+            onDeleteMessage={deleteMessage}
           />
         )}
         {page === "activity" && (
@@ -2425,7 +2781,11 @@ export default function App({
           }}
           onOpenTask={showTask}
           teammate={w.teammates.find((t) => t.id === selectedTask.teammateId)}
-          onOpenTeammate={openTeammate}
+          teammates={w.teammates}
+          messages={w.messages.filter((m) =>
+            selectedTask.messageIds?.includes(m.id),
+          )}
+          onOpenTeammate={(id) => openTeammate(id)}
           onArchive={() => archiveTask(selectedTask)}
           onDuplicate={() => duplicateTask(selectedTask)}
           onFocus={() =>

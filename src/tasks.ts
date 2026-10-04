@@ -60,6 +60,16 @@ export interface Task {
   verdict?: Verdict;
   /** The teammate doing the task; its engine overrides `agentId` at launch. */
   teammateId?: string;
+  /**
+   * On a task started by teammate messages: the messages it handles. Its runs
+   * always receive them, even if an earlier run already did.
+   */
+  messageIds?: string[];
+  /**
+   * On a task started by a message: how deep in a chain of messages it is
+   * (see messages.ts). Messages its runs send carry one more.
+   */
+  hop?: number;
 }
 
 /** The fields a user edits in the composer; the rest are managed by App. */
