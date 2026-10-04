@@ -53,6 +53,13 @@ Built with **Tauri (Rust) + React + TypeScript + xterm.js**.
   learns, and Crucible folds the notes back in when the run ends. Memory belongs
   to the teammate, not the project, so lessons from one project reach the next.
   Read, edit or clear it on the **Teammates** page.
+- **Teammate messages** — a teammate can write to the others (a lesson that
+  applies to their stack, a question, a request) in an outbox file its run is
+  given. Crucible delivers the message when the teammate finishes a turn, and
+  the recipient reads it at the start of its next task. Set a teammate to
+  **Start a task** and a message starts a headless task for it in the sender's
+  folder, up to a chain limit, so two teammates can't keep waking each other.
+  You can write to a teammate too, and every message is on its **Messages** tab.
 - **Agent status & Dashboard** — every running pane says what its agent is
   doing: _Working_, _Needs you_ (blocked on an approval prompt, a bell or an OSC 9
   request, with the question shown), _Done_ (finished a turn you have not looked
@@ -172,7 +179,8 @@ real behaviour:
   The key is stored in plain text with the rest of the workspace on this machine.
 - **Terminal** — font size and family, scrollback, cursor style and blink, and
   copy-on-select. Applied live to panes that are already running.
-- **Task board** — auto-start queued cards, a cap on concurrent task runs, what
+- **Task board** — whether teammate messages may start tasks and how long a
+  chain of them may get, auto-start queued cards, a cap on concurrent task runs, what
   a finished headless run does (Review / Done on exit 0 / stay put), whether
   deleting a card asks first, and the review instructions appended to every
   agent-review prompt (blank uses the built-in checklist).
@@ -230,9 +238,12 @@ wix-upgrade-code` prints both the derived and the pinned value.
 - `src/AgentPane.tsx` — the view for one pane: mounts its terminal, renders the
   header, find bar and overflow menu.
 - `src/teammates.ts` / `src/TeammatesPage.tsx` — the pure teammate model
-  (prompt preface, memory file name, the merge of a run's notes) and the
-  Teammates page. `seed_memory` / `collect_memory` in `desktop.rs` move the memory
-  file into a run's folder and back.
+  (prompt preface, the run's folder, the merge of a run's notes) and the
+  Teammates page. `seed_teammate_run` / `collect_teammate_run` in `desktop.rs` set
+  up a run's `.crucible/<name>-<run>/` folder (memory, inbox, outbox) and read it
+  back.
+- `src/messages.ts` — the pure messaging model: reading an outbox, building an
+  inbox, when a message starts a task, and the chain limit.
 - `src/activity.ts` / `src/Dashboard.tsx` — the pure agent-activity model
   (Working / Needs you / Done / Idle, inferred from the terminal stream) and the
   Dashboard that groups every session by it. `src/desktopNotify.ts` sends the
@@ -264,8 +275,8 @@ wix-upgrade-code` prints both the derived and the pinned value.
 
 ## Roadmap ideas
 
-- Real orchestration, still open: a coordinator that creates and assigns cards,
-  and a mailbox/shared feed between agents. The builder/reviewer handoff now
-  exists as [Agent review](#task-board), and per-agent status (the Dashboard)
-  is the groundwork messaging needs. Direction and research:
-  `docs/bridgemind-research.md`; next phases: `docs/agent-status-plan.md`.
+- Real orchestration, still open: a coordinator that creates and assigns
+  cards. The builder/reviewer handoff exists as [Agent review](#task-board),
+  per-agent status as the Dashboard, and agents can message each other as
+  teammates. Direction and research: `docs/bridgemind-research.md`; next
+  phases: `docs/agent-status-plan.md`.

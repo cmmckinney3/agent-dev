@@ -5,19 +5,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
+import { pureModules } from "./modules.mjs";
 
 // Exercise the actual pure TypeScript models without adding a browser test runtime.
 const temp = mkdtempSync(join(tmpdir(), "crucible-review-tests-"));
-for (const name of [
-  "workspace",
-  "layout",
-  "agents",
-  "settings",
-  "tasks",
-  "usage",
-  "review",
-  "teammates",
-]) {
+for (const name of pureModules()) {
   const source = readFileSync(
     new URL(`../src/${name}.ts`, import.meta.url),
     "utf8",
@@ -157,6 +149,16 @@ test("review prompt shows what was actually sent to the builder", () => {
         `Original request:\\nDo work\\n\\n${CHANGE_REQUEST_HEADING}\\nCover the error path\\n\\n`,
       ),
     );
+});
+test("a teammate's preface is not quoted to the reviewer as the request", () => {
+  const p = review({
+    run: run({
+      prompt: "You are Ada, a teammate…\n\nTask:\nAdd the login form",
+      request: "Add the login form",
+    }),
+  });
+  assert.match(p, /Original request:\nAdd the login form\n\n/);
+  assert.doesNotMatch(p, /You are Ada/);
 });
 test("review prompt points at the worktree or warns about the shared folder", () => {
   const isolated = review({ task: task("t1", { worktree: "C:\\wt" }) });

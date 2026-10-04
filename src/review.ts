@@ -80,7 +80,9 @@ export function buildReviewPrompt({
   return [
     `Review the work another coding agent (${builderName}) did for the task below. Do not modify, create or delete files and do not commit — report findings only.`,
     `Task: ${task.title}`,
-    `Original request:\n${run?.prompt || launchPrompt(task)}`,
+    // A teammate's run also sent a preface (who it is, its memory and inbox);
+    // the reviewer needs only what was asked.
+    `Original request:\n${run?.request || run?.prompt || launchPrompt(task)}`,
     `Where to look:\n${where}`,
     changed,
     ended,

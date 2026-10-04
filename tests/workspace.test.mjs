@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
+import { pureModules } from './modules.mjs';
 
 // Exercise the actual pure TypeScript models without adding a browser test runtime.
 const temp = mkdtempSync(join(tmpdir(), 'crucible-model-tests-'));
-for (const name of ['workspace', 'layout', 'agents', 'settings', 'tasks', 'usage', 'teammates']) {
+for (const name of pureModules()) {
   const source = readFileSync(new URL(`../src/${name}.ts`, import.meta.url), 'utf8');
   const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
   writeFileSync(join(temp, `${name}.mjs`), outputText.replace(/from "\.\/([^"]+)"/g, 'from "./$1.mjs"'));

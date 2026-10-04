@@ -5,6 +5,7 @@ import { AgentConfig } from "./agents";
 import { changeRequestFrom, pickReviewer, VERDICT_LABELS } from "./review";
 import { Task } from "./tasks";
 import { Teammate } from "./teammates";
+import { OWNER, senderName, TeamMessage } from "./messages";
 import { RunRecord } from "./usage";
 import { taskBlocker } from "./workspace";
 import { PlayIcon, PencilIcon } from "./icons";
@@ -23,6 +24,8 @@ export default function TaskDetail({
   onRequestChanges,
   onOpenTask,
   teammate,
+  teammates,
+  messages,
   onOpenTeammate,
   onArchive,
   onDuplicate,
@@ -49,6 +52,9 @@ export default function TaskDetail({
   onOpenTask: (id: string) => void;
   /** The teammate doing this task, if one is. */
   teammate?: Teammate;
+  teammates: Teammate[];
+  /** On a task started by messages: those messages. */
+  messages: TeamMessage[];
   onOpenTeammate: (id: string) => void;
   onArchive: () => void;
   onDuplicate: () => void;
@@ -192,6 +198,45 @@ export default function TaskDetail({
                 </div>
                 {task.verdict.summary && (
                   <pre className="request-view">{task.verdict.summary}</pre>
+                )}
+              </>
+            )}
+            {task.messageIds && (
+              <>
+                <h3>
+                  {messages.length === 1 ? "Message" : "Messages"} to handle
+                </h3>
+                {messages.length ? (
+                  <ul className="message-list compact">
+                    {messages.map((m) => (
+                      <li key={m.id}>
+                        <div className="message-head">
+                          <strong>
+                            {m.from === OWNER
+                              ? "You"
+                              : senderName(m, teammates)}
+                          </strong>
+                          <span aria-label="to">→</span>
+                          <strong>{teammate?.name ?? "teammate"}</strong>
+                          <time
+                            className="muted"
+                            dateTime={new Date(m.at).toISOString()}
+                          >
+                            {new Date(m.at).toLocaleString()}
+                          </time>
+                          <span className="muted">
+                            {m.deliveredAt ? "Delivered" : "Waiting"}
+                          </span>
+                        </div>
+                        <pre className="message-body">{m.body}</pre>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="muted">
+                    Its messages were deleted. A run still delivers any messages
+                    waiting for {teammate?.name ?? "the teammate"}.
+                  </p>
                 )}
               </>
             )}

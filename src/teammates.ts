@@ -1,12 +1,16 @@
 // Teammates: saved, named agents with a brief and a memory of their own. Pure:
-// App owns the state, desktop.rs moves the memory file in and out of a run's
-// folder, and every rule about names, prompts and merging lives here.
+// App owns the state, desktop.rs moves a run's files in and out of its folder,
+// and every rule about names, prompts and merging lives here.
 //
-// Argv safety: the memory is written by agents and can hold anything, so it
-// never goes into a prompt; the prompt carries only its relative path. The
-// brief is the owner's own text, like a task prompt, and is capped.
+// Argv safety: the memory (like a message, see messages.ts) is written by
+// agents and can hold anything, so it never goes into a prompt; the prompt
+// carries only relative paths, names and counts. The brief is the owner's own
+// text, like a task prompt, and is capped.
 
 import { AgentConfig } from "./agents";
+
+/** What a message to the teammate does: wait for its next task, or start one. */
+export type OnMessage = "hold" | "start";
 
 export interface Teammate {
   id: string;
@@ -18,14 +22,26 @@ export interface Teammate {
   /** Notes the teammate keeps for itself; they follow it across projects. */
   memory: string;
   memoryUpdatedAt?: number;
+  /** Its runs get an outbox and are told who they can write to. */
+  canMessage: boolean;
+  onMessage: OnMessage;
   createdAt: number;
 }
 
 export const NAME_MAX = 40;
 export const BRIEF_MAX = 2000;
 export const MEMORY_MAX = 16000;
-/** Where a run finds its teammate's memory, relative to the run's folder. */
-export const MEMORY_DIR = ".crucible/memory";
+/**
+ * Where a teammate run's files live, relative to the run's folder: one
+ * subfolder per run (see runFolder), kept out of Git by desktop.rs.
+ */
+export const CRUCIBLE_DIR = ".crucible";
+
+/**
+ * Characters a name may not use. Names travel in every teammate's prompt, and
+ * cmd.exe (which runs a batch-script agent) refuses a prompt holding them.
+ */
+const UNSAFE_NAME = /["%!^&|<>\u0000-\u001f\u007f]/g;
 
 export function teammateNameError(
   name: string,
@@ -36,50 +52,77 @@ export function teammateNameError(
   if (!trimmed) return "Give the teammate a name.";
   if (trimmed.length > NAME_MAX)
     return `Keep the name to ${NAME_MAX} characters.`;
+  if (new RegExp(UNSAFE_NAME.source).test(trimmed))
+    return 'Names cannot use " % ! ^ & | < or >.';
   const taken = teammates.some(
     (t) => t.id !== id && t.name.trim().toLowerCase() === trimmed.toLowerCase(),
   );
   return taken ? "Another teammate already has this name." : undefined;
 }
 
+const slug = (text: string) =>
+  text
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/, "");
+
 /**
- * The memory file's name: a slug of the name plus the end of the id, so two
- * names that slug alike ("Front end", "front-end") never share a file. Only
- * `[a-z0-9-]` and `.md`, which desktop.rs checks again.
+ * The run's own folder under CRUCIBLE_DIR: a slug of the teammate's name plus
+ * the end of the run id. One folder per run, so two runs of one teammate in
+ * the same project never share (and overwrite) a memory file. Only `[a-z0-9-]`,
+ * which desktop.rs checks again.
  */
-export function memoryFileName(t: Pick<Teammate, "id" | "name">): string {
-  const slug =
-    t.name
-      .toLowerCase()
-      .normalize("NFKD")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40)
-      .replace(/-+$/, "") || "teammate";
+export function runFolder(t: Pick<Teammate, "name">, runId: string): string {
   const tail =
-    t.id
+    runId
       .toLowerCase()
       .replace(/[^a-z0-9]/g, "")
-      .slice(-6) || "0";
-  return `${slug}-${tail}.md`;
+      .slice(-8) || "0";
+  return `${slug(t.name) || "teammate"}-${tail}`;
 }
 
-export const memoryPath = (t: Pick<Teammate, "id" | "name">) =>
-  `${MEMORY_DIR}/${memoryFileName(t)}`;
+/** "Ben", "Ben and Cleo", "Ben, Cleo and Dan". */
+export function nameList(names: string[]): string {
+  if (names.length < 2) return names.join("");
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+export interface TeammateRun {
+  /** The run's folder name (runFolder), under CRUCIBLE_DIR. */
+  folder: string;
+  /** Messages delivered in its inbox.md; 0 = no inbox. */
+  inbox: number;
+  /** Teammates it can write to; empty = no outbox. */
+  team: string[];
+}
 
 /**
- * The prompt a teammate's run sends: who it is, its brief, where its memory is
- * and how to keep it, then the task. Never the memory itself.
+ * The prompt a teammate's run sends: who it is, its brief, where its memory,
+ * inbox and outbox are and how to use them, then the task. Never the memory or
+ * a message itself.
  */
 export function teammatePrompt(
-  t: Pick<Teammate, "id" | "name" | "brief">,
+  t: Pick<Teammate, "name" | "brief">,
   prompt: string,
+  run: TeammateRun,
 ): string {
   const brief = t.brief.trim();
+  const dir = `${CRUCIBLE_DIR}/${run.folder}`;
+  const many = run.inbox === 1 ? "1 new message" : `${run.inbox} new messages`;
   return [
     `You are ${t.name.trim()}, a teammate working through Crucible.`,
     brief ? `Your brief:\n${brief}` : undefined,
-    `Your memory from earlier work, across projects, is in ${memoryPath(t)} (relative to this folder). Read it before you start. When you learn something that should still matter on future work (a preference, a decision, a convention, a pitfall), add it there as a short line. Keep it current: fix or remove lines that turn out to be wrong. Never store secrets in it.`,
+    `Your memory from earlier work, across projects, is in ${dir}/memory.md (paths are relative to this folder). Read it before you start. When you learn something that should still matter on future work (a preference, a decision, a convention, a pitfall), add it there as a short line. Keep it current: fix or remove lines that turn out to be wrong. Never store secrets in it.`,
+    run.inbox > 0
+      ? `You have ${many} from the team in ${dir}/inbox.md. Read ${run.inbox === 1 ? "it" : "them"} before you start: act on what bears on this task, and keep lasting lessons in your memory.`
+      : undefined,
+    run.team.length
+      ? // No quotes or angle brackets: they are what cmd.exe refuses in argv.
+        `You can message your teammates (${nameList(run.team)}): a lesson that applies to their work, a question, or a request. Write each message in ${dir}/outbox.md below a heading line naming who it is for, such as ## To: ${run.team[0]} (## To: everyone reaches them all). Crucible delivers it when you finish a turn, and they read it when they next start work, so do not wait for a reply. Keep messages short and self-contained, and never include secrets.`
+      : undefined,
     `Task:\n${prompt}`,
   ]
     .filter((section) => section !== undefined)
@@ -172,6 +215,7 @@ export function normalizeTeammates(
     const t = item as Record<string, unknown>;
     if (typeof t.id !== "string" || !t.id || ids.has(t.id)) continue;
     let name = (typeof t.name === "string" ? t.name : "")
+      .replace(UNSAFE_NAME, "")
       .trim()
       .slice(0, NAME_MAX);
     if (!name) continue;
@@ -194,6 +238,8 @@ export function normalizeTeammates(
         Number.isFinite(t.memoryUpdatedAt)
           ? t.memoryUpdatedAt
           : undefined,
+      canMessage: t.canMessage !== false,
+      onMessage: t.onMessage === "start" ? "start" : "hold",
       createdAt:
         typeof t.createdAt === "number" && Number.isFinite(t.createdAt)
           ? t.createdAt

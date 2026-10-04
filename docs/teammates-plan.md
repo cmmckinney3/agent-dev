@@ -1,6 +1,7 @@
 # Implementation plan — Teammates with per-teammate memory
 
-Status: implemented 2026-10-01 (see `docs/development-checkpoint.md`) · Direction: `docs/bridgemind-research.md`
+Status: implemented 2026-10-01 (see `docs/development-checkpoint.md`); the
+memory file moved to a folder per run with messaging (`docs/messaging-plan.md`) · Direction: `docs/bridgemind-research.md`
 section 5 (the owner chose saved, named agents with their own memory, so what
 an agent learns on one project reaches the next; many projects share stacks).
 

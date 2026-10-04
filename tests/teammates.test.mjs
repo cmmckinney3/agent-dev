@@ -5,17 +5,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
+import { pureModules } from "./modules.mjs";
 
 const temp = mkdtempSync(join(tmpdir(), "crucible-teammate-tests-"));
-for (const name of [
-  "workspace",
-  "layout",
-  "agents",
-  "settings",
-  "tasks",
-  "usage",
-  "teammates",
-]) {
+for (const name of pureModules()) {
   const source = readFileSync(
     new URL(`../src/${name}.ts`, import.meta.url),
     "utf8",
@@ -60,28 +53,42 @@ test("names: required, capped, unique regardless of case", () => {
   assert.match(T.teammateNameError("ada", [ada]), /already/);
   assert.equal(T.teammateNameError("Ada", [ada], ada.id), undefined);
   assert.equal(T.teammateNameError("Grace", [ada]), undefined);
+  // Names go into prompts, so nothing cmd.exe would refuse.
+  for (const bad of ["R&D", 'Ada "A"', "50%", "Hi!", "a|b", "<x>", "a^b"])
+    assert.match(T.teammateNameError(bad, []), /cannot use/, bad);
+  assert.equal(T.teammateNameError("Zoë-2 (front end)", []), undefined);
+  const [cleaned] = T.normalizeTeammates(
+    [{ ...ada, name: "R&D <team>" }],
+    [{ id: "claude", enabled: true }],
+  );
+  assert.equal(cleaned.name, "RD team");
 });
 
-test("memory file names are safe slugs that never collide", () => {
-  const valid = /^[a-z0-9][a-z0-9-]*\.md$/; // what desktop.rs accepts
-  assert.equal(T.memoryFileName(ada), "ada-02d841.md");
+test("run folders are safe slugs, one per run, so runs never share files", () => {
+  const valid = /^[a-z0-9][a-z0-9-]*$/; // what desktop.rs accepts
+  const run = "run-0b7e1c52-9f4d-4a8e-bd51-3f2a6c81d907";
+  assert.equal(T.runFolder(ada, run), "ada-6c81d907");
   for (const name of ["Front end", "front-end", "Zoë & Co!", "---", "日本"]) {
-    const file = T.memoryFileName({ id: "teammate-abc123", name });
-    assert.match(file, valid, name);
-    assert.ok(file.length <= 80);
+    const folder = T.runFolder({ name }, run);
+    assert.match(folder, valid, name);
+    assert.ok(folder.length <= 80);
   }
   assert.notEqual(
-    T.memoryFileName({ id: "teammate-aaaaaa", name: "Front end" }),
-    T.memoryFileName({ id: "teammate-bbbbbb", name: "front-end" }),
+    T.runFolder(ada, "run-aaaaaaaa"),
+    T.runFolder(ada, "run-bbbbbbbb"),
+    "two runs of one teammate in one folder get their own files",
   );
-  assert.equal(T.memoryFileName({ id: "x", name: "日本" }), "teammate-x.md");
-  assert.equal(T.memoryPath(ada), ".crucible/memory/ada-02d841.md");
+  assert.equal(T.runFolder({ name: "日本" }, "x"), "teammate-x");
+  assert.equal(T.nameList(["Ben"]), "Ben");
+  assert.equal(T.nameList(["Ben", "Cleo", "Dan"]), "Ben, Cleo and Dan");
 });
 
-test("the prompt names the teammate, brief, memory path and task, never the memory", () => {
+test("the prompt names the teammate, brief, files and task, never the memory or a message", () => {
+  const run = { folder: "ada-6c81d907", inbox: 0, team: [] };
   const prompt = T.teammatePrompt(
     { ...ada, memory: "SECRET-LINE never in argv" },
     "Fix the flaky auth test.",
+    run,
   );
   const sections = prompt.split("\n\n");
   assert.equal(
@@ -89,13 +96,38 @@ test("the prompt names the teammate, brief, memory path and task, never the memo
     "You are Ada, a teammate working through Crucible.",
   );
   assert.equal(sections[1], `Your brief:\n${ada.brief}`);
-  assert.match(sections[2], /\.crucible\/memory\/ada-02d841\.md/);
+  assert.match(sections[2], /\.crucible\/ada-6c81d907\/memory\.md/);
   assert.match(sections[2], /Never store secrets/);
   assert.equal(sections.at(-1), "Task:\nFix the flaky auth test.");
+  assert.equal(sections.length, 4, "no inbox and no outbox sections");
   assert.ok(!prompt.includes("SECRET-LINE"));
-  const noBrief = T.teammatePrompt({ ...ada, brief: "  " }, "Do it.");
+  const noBrief = T.teammatePrompt({ ...ada, brief: "  " }, "Do it.", run);
   assert.ok(!noBrief.includes("Your brief"));
   assert.equal(noBrief.split("\n\n").length, 3);
+  // With an inbox and teammates to write to: counts, names and paths only.
+  const full = T.teammatePrompt(ada, "Do it.", {
+    folder: "ada-1",
+    inbox: 2,
+    team: ["Ben", "Cleo"],
+  });
+  const parts = full.split("\n\n");
+  assert.equal(parts.length, 6);
+  assert.match(
+    parts[3],
+    /^You have 2 new messages from the team in \.crucible\/ada-1\/inbox\.md\./,
+  );
+  assert.match(parts[4], /\(Ben and Cleo\)/);
+  assert.match(
+    parts[4],
+    /\.crucible\/ada-1\/outbox\.md below a heading line naming who it is for, such as ## To: Ben \(## To: everyone/,
+  );
+  assert.match(parts[4], /do not wait for a reply/);
+  // The preface adds nothing cmd.exe would refuse beyond what the task has.
+  assert.doesNotMatch(full.replace("Do it.", ""), /["%!^&|<>]/);
+  assert.match(
+    T.teammatePrompt(ada, "x", { folder: "a", inbox: 1, team: [] }),
+    /You have 1 new message from/,
+  );
 });
 
 test("merge: nothing back, or nothing new, changes nothing", () => {
@@ -191,6 +223,19 @@ test("normalize: bad records dropped, engines resolved, names kept unique, text 
   assert.equal(out[2].brief.length, T.BRIEF_MAX);
   assert.equal(out[2].memory.length, T.MEMORY_MAX);
   assert.equal(typeof out[1].createdAt, "number");
+  // Messaging defaults: may write to others, holds what arrives.
+  assert.equal(out[0].canMessage, true);
+  assert.equal(out[0].onMessage, "hold");
+  const [quiet] = T.normalizeTeammates(
+    [{ ...ada, canMessage: false, onMessage: "start" }],
+    agents,
+  );
+  assert.equal(quiet.canMessage, false);
+  assert.equal(quiet.onMessage, "start");
+  assert.equal(
+    T.normalizeTeammates([{ ...ada, onMessage: "shout" }], agents)[0].onMessage,
+    "hold",
+  );
 });
 
 test("workspace: teammates load, task links to missing teammates drop, strict import checks the list", () => {
@@ -229,6 +274,90 @@ test("workspace: teammates load, task links to missing teammates drop, strict im
     draftFromTask(w.tasks[0]).teammateId,
     ada.id,
     "the composer owns the choice",
+  );
+});
+
+test("workspace: a half-written draft and templates keep their teammate across a reload", () => {
+  const draft = {
+    title: "t",
+    prompt: "p",
+    agentId: "claude",
+    mode: "headless",
+  };
+  const w = normalizeWorkspace({
+    teammates: [ada],
+    projects: [
+      {
+        id: "p1",
+        name: "One",
+        cwd: "C:\\one",
+        draft: { ...draft, teammateId: ada.id },
+      },
+      {
+        id: "p2",
+        name: "Two",
+        cwd: "C:\\two",
+        draft: { ...draft, teammateId: "teammate-gone" },
+      },
+    ],
+    templates: [
+      { id: "tp1", name: "As Ada", draft: { ...draft, teammateId: ada.id } },
+      { id: "tp2", name: "Gone", draft: { ...draft, teammateId: "x" } },
+    ],
+  });
+  assert.equal(w.projects[0].draft.teammateId, ada.id);
+  assert.equal(w.projects[1].draft.teammateId, undefined);
+  assert.equal(w.templates[0].draft.teammateId, ada.id);
+  assert.equal(w.templates[1].draft.teammateId, undefined);
+});
+
+test("workspace: messages load, message tasks keep only known messages, strict import checks the list", () => {
+  const ben = { ...ada, id: "teammate-ben", name: "Ben" };
+  const w = normalizeWorkspace({
+    teammates: [ada, ben],
+    messages: [
+      {
+        id: "m1",
+        from: ada.id,
+        fromName: "Ada",
+        to: ben.id,
+        body: "hi",
+        at: 5,
+        hop: 2,
+      },
+      {
+        id: "m2",
+        from: ada.id,
+        fromName: "Ada",
+        to: "teammate-gone",
+        body: "x",
+        at: 6,
+      },
+    ],
+    tasks: [
+      {
+        id: "t1",
+        title: "Message from Ada",
+        prompt: "p",
+        agentId: "claude",
+        mode: "headless",
+        status: "backlog",
+        teammateId: ben.id,
+        messageIds: ["m1", "m2", 7],
+        hop: 2.6,
+      },
+    ],
+  });
+  assert.deepEqual(
+    w.messages.map((m) => m.id),
+    ["m1"],
+  );
+  assert.deepEqual(w.tasks[0].messageIds, ["m1"]);
+  assert.equal(w.tasks[0].hop, 3);
+  assert.deepEqual(normalizeWorkspace({}).messages, []);
+  assert.throws(
+    () => normalizeWorkspace({ agents: [], messages: {} }, true),
+    /messages/,
   );
 });
 

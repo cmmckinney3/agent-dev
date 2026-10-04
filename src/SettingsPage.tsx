@@ -13,6 +13,7 @@ import {
   OPENROUTER_MODEL_TOKEN,
 } from "./agents";
 import {
+  CHAIN_RANGE,
   CONCURRENCY_RANGE,
   CURSOR_STYLES,
   CursorStyle,
@@ -753,6 +754,40 @@ export default function SettingsPage({
                 Reset to default
               </button>
             </div>
+          </Row>
+          <Row
+            label="Messages can start tasks"
+            hint="A message to a teammate set to “Start a task” creates a headless task for it. Off pauses that for every teammate; messages still wait in their inboxes."
+          >
+            <Toggle
+              checked={settings.messageStarts}
+              label="Messages can start tasks"
+              onChange={(messageStarts) => onChange({ messageStarts })}
+            />
+          </Row>
+          <Row
+            label="Longest message chain"
+            hint="How many message-started tasks may follow one another (Ada asks Ben, Ben replies, …) before the next message waits for you."
+            htmlFor="set-message-chain"
+          >
+            <input
+              id="set-message-chain"
+              className="set-input num"
+              type="number"
+              min={CHAIN_RANGE.min}
+              max={CHAIN_RANGE.max}
+              value={settings.messageChainLimit}
+              onChange={(e) =>
+                onChange({
+                  messageChainLimit: clamped(
+                    e.target.value,
+                    settings.messageChainLimit,
+                    CHAIN_RANGE.min,
+                    CHAIN_RANGE.max,
+                  ),
+                })
+              }
+            />
           </Row>
           <Row
             label="Confirm before archiving a card"

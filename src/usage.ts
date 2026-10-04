@@ -38,6 +38,11 @@ export interface RunRecord {
   model?: string;
   program?: string;
   prompt?: string;
+  /**
+   * The task's own request, when `prompt` also carries a teammate preface; an
+   * agent review quotes this, not the preface.
+   */
+  request?: string;
   error?: string;
   resumeId?: string;
   /** Set when a teammate did the run; the name is a snapshot, like agentName. */
@@ -112,7 +117,7 @@ export function normalizeRuns(raw: unknown): RunRecord[] {
         exitCode: num(r.exitCode),
         outcome: stored === "running" ? "interrupted" : stored,
         projectId: str(r.projectId), cwd: str(r.cwd), model: str(r.model),
-        program: str(r.program), prompt: str(r.prompt), error: str(r.error), resumeId: str(r.resumeId),
+        program: str(r.program), prompt: str(r.prompt), request: str(r.request), error: str(r.error), resumeId: str(r.resumeId),
         teammateId: str(r.teammateId), teammateName: str(r.teammateName),
       };
     })

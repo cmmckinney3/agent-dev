@@ -8,6 +8,7 @@ import {
 import { Settings, normalizeSettings } from "./settings";
 import { Task, TaskDraft, VERDICT_SUMMARY_MAX, Verdict } from "./tasks";
 import { Teammate, normalizeTeammates } from "./teammates";
+import { TeamMessage, normalizeMessages } from "./messages";
 import { RunRecord, normalizeRuns } from "./usage";
 
 export const STORAGE_KEY = "agentdev.workspace.v7";
@@ -49,6 +50,8 @@ export interface Workspace {
   templates: PromptTemplate[];
   /** Saved, named agents with a brief and their own memory. */
   teammates: Teammate[];
+  /** Messages between teammates (and from the owner), oldest first. */
+  messages: TeamMessage[];
 }
 const object = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v)
@@ -127,6 +130,7 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
       "usage",
       "templates",
       "teammates",
+      "messages",
     ]) {
       if (r[field] !== undefined && !Array.isArray(r[field]))
         throw new Error(`Backup field “${field}” must be a list.`);
@@ -154,6 +158,10 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
   const agents = normalizeAgents(r.agents);
   const teammates = normalizeTeammates(r.teammates, agents);
   const teammateIds = new Set(teammates.map((t) => t.id));
+  const teammateId = (id: unknown) =>
+    typeof id === "string" && teammateIds.has(id) ? id : undefined;
+  const messages = normalizeMessages(r.messages, teammateIds);
+  const messageIds = new Set(messages.map((m) => m.id));
   const available = agents.filter((a) => a.enabled);
   const agentId = (id: unknown) =>
     available.some((a) => a.id === id) ? (id as string) : available[0].id;
@@ -226,6 +234,7 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
         priority: object(p.draft).priority === "high" ? "high" : object(p.draft).priority === "low" ? "low" : "normal",
         isolation: object(p.draft).isolation === true,
         dependencies: Array.isArray(object(p.draft).dependencies) ? (object(p.draft).dependencies as unknown[]).filter((d):d is string=>typeof d==="string") : [],
+        teammateId: teammateId(object(p.draft).teammateId),
       } : undefined,
       preferredAgentId: agentId(p.preferredAgentId),
     };
@@ -284,9 +293,15 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
             : undefined,
         reviewOf: typeof t.reviewOf === "string" ? t.reviewOf : undefined,
         verdict: verdictOf(t.verdict),
-        teammateId:
-          typeof t.teammateId === "string" && teammateIds.has(t.teammateId)
-            ? t.teammateId
+        teammateId: teammateId(t.teammateId),
+        messageIds: Array.isArray(t.messageIds)
+          ? t.messageIds.filter(
+              (m): m is string => typeof m === "string" && messageIds.has(m),
+            )
+          : undefined,
+        hop:
+          typeof t.hop === "number" && Number.isFinite(t.hop)
+            ? Math.min(99, Math.max(1, Math.round(t.hop)))
             : undefined,
       };
     });
@@ -315,6 +330,7 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
     boardWidth: Math.max(240, Math.min(480, finite(r.boardWidth, 292))),
     dashboardOpen: r.dashboardOpen === true,
     teammates,
+    messages,
     templates: (Array.isArray(r.templates) ? r.templates : [])
       .filter(
         (t) =>
@@ -333,6 +349,7 @@ export function normalizeWorkspace(raw: unknown, strict = false): Workspace {
           cwd: str(t.draft.cwd)||undefined,
           priority: t.draft.priority === "high" || t.draft.priority === "low" ? t.draft.priority : "normal",
           isolation: t.draft.isolation === true,
+          teammateId: teammateId(t.draft.teammateId),
         },
       })),
   };

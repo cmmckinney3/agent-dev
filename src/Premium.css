@@ -1611,6 +1611,118 @@ kbd {
   margin: 10px auto 18px;
   line-height: 1.6;
 }
+/* The editor's tabs sit flush with its top edge. */
+.teammate-editor > .review-tabs {
+  margin: -6px 0 16px;
+  flex-wrap: wrap;
+}
+.teammate-editor code {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+/* Waiting-message counts: the header's Teammates button and the list. */
+.count-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--activity-waiting);
+  color: #1b1404;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.teammate-list .count-badge {
+  margin: 2px 0 0 auto;
+  flex-shrink: 0;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+/* ---- Teammate messages ---- */
+.message-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.message-arrival {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--text-muted);
+}
+.message-compose {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 4px;
+}
+.message-compose textarea {
+  flex: 1;
+}
+.message-list {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.message-list li {
+  padding: 10px 0 10px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  border-left: 2px solid transparent;
+}
+.message-list li.waiting {
+  border-left-color: var(--activity-waiting);
+}
+.message-list li:last-child {
+  border-bottom: 0;
+}
+.message-list.compact li {
+  padding-left: 0;
+}
+.message-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.message-head strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.message-body {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.message-body.folded {
+  max-height: calc(1.6em * 6);
+  overflow: hidden;
+}
+.outcome.message-waiting {
+  color: var(--activity-waiting);
+  border-color: #55462b;
+}
+.outcome.message-delivered {
+  color: #7dd3a5;
+  border-color: #294c3c;
+}
 .settings-page {
   min-height: 0;
 }

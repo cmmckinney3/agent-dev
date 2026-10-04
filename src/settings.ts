@@ -61,6 +61,13 @@ export interface Settings {
    * DEFAULT_REVIEW_INSTRUCTIONS when the prompt is built.
    */
   reviewInstructions: string;
+  /**
+   * A message to a teammate set to "start a task" may start one. Off pauses
+   * that for every teammate; messages still wait in their inboxes.
+   */
+  messageStarts: boolean;
+  /** How long a chain of message-started tasks may get (see messages.ts). */
+  messageChainLimit: number;
 
   // ---- Workspace ----
   /** Require a second click on "Stop all". */
@@ -106,6 +113,8 @@ export const DEFAULT_SETTINGS: Settings = {
   headlessCompletion: "review",
   confirmTaskDelete: true,
   reviewInstructions: DEFAULT_REVIEW_INSTRUCTIONS,
+  messageStarts: true,
+  messageChainLimit: 3,
 
   confirmStopAll: false,
   broadcastAppendEnter: true,
@@ -125,6 +134,8 @@ export const DEFAULT_SETTINGS: Settings = {
 export const FONT_SIZE_RANGE = { min: 9, max: 22 } as const;
 export const SCROLLBACK_RANGE = { min: 500, max: 200_000 } as const;
 export const CONCURRENCY_RANGE = { min: 0, max: 12 } as const;
+/** "Longest message chain": how many message-started tasks may follow each other. */
+export const CHAIN_RANGE = { min: 1, max: 10 } as const;
 /** Retention choices offered for run history (also the hard cap, at the end). */
 export const USAGE_LIMITS = [100, 500, 2000] as const;
 
@@ -226,6 +237,13 @@ export function normalizeSettings(raw: unknown): Settings {
     reviewInstructions: str(r.reviewInstructions, d.reviewInstructions).slice(
       0,
       REVIEW_INSTRUCTIONS_MAX,
+    ),
+    messageStarts: bool(r.messageStarts, d.messageStarts),
+    messageChainLimit: num(
+      r.messageChainLimit,
+      d.messageChainLimit,
+      CHAIN_RANGE.min,
+      CHAIN_RANGE.max,
     ),
 
     confirmStopAll: bool(r.confirmStopAll, d.confirmStopAll),

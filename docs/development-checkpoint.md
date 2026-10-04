@@ -1,4 +1,4 @@
-# Development checkpoint — October 1, 2026
+# Development checkpoint — October 3, 2026
 
 **Development only: do not replace, install over, or modify the installed Crucible
 app.** Resume this working tree; do not reset it. Many files were already modified
@@ -7,6 +7,113 @@ before this implementation.
 The resume list from the previous checkpoint (September 10) is complete except for
 the native desktop verification noted under "Still owed" below. Everything else in
 that list was either implemented or verified as already correct.
+
+## Teammate messaging (October 3)
+
+Plan: `docs/messaging-plan.md`. The owner asked for agents that talk to each
+other, since many of their projects share a stack.
+
+- **Channel.** A teammate run now gets its own folder,
+  `<run folder>/.crucible/<name>-<run id tail>/`, with `memory.md`, `inbox.md`
+  (only when messages are delivered) and an empty `outbox.md` (only when it may
+  message and has teammates). `seed_teammate_run` / `collect_teammate_run`
+  replace `seed_memory` / `collect_memory`; the folder (and an empty
+  `.crucible`) is removed after the run, keeping any other file the teammate
+  left there. Seeding and removal share a lock, every path is checked to
+  resolve inside the run's folder before it is written, read or removed, and
+  `.crucible/` stays in `info/exclude`.
+- **Model** (`src/messages.ts`, pure): `TeamMessage { from (teammate or
+  "owner"), fromName snapshot, to, body (4000), at, projectId, cwd, runId, hop,
+  deliveredAt, deliveredRunId, taskId }`. `Workspace.messages` normalizes to
+  `[]` (no `STORAGE_KEY` bump); messages to a missing teammate are dropped; 500
+  are kept, delivered ones dropped first. `Teammate.canMessage` (default on)
+  and `onMessage` (`hold` default, or `start`); `Task.messageIds` / `Task.hop`
+  on message tasks (cleared by Duplicate); `RunRecord.request`;
+  `Settings.messageStarts` (on) and `messageChainLimit` (3, 1–10).
+- **Sending.** The prompt lists the other teammates by name and the outbox
+  path (no quotes or angle brackets, which cmd.exe refuses). App reads the
+  outbox when the pane's activity leaves Working while the run is live, and at
+  the run's end; `readOutbox` takes `## To:` headings (bold or a bare line that
+  names a teammate also works; "Ben (re: auth)" matches Ben), `everyone`, and
+  reports unknown names once per run. Keys of sent messages are kept per run,
+  so the teammate can keep or clear the file; 10 a run at most.
+- **Delivery.** `startTask` gives a teammate run its waiting messages (oldest
+  first, 20 at most, plus a message task's own) as `inbox.md`; the prompt says
+  how many. They are marked delivered only if the process starts. The inbox
+  quotes the recipient's own last message to each sender, for a reply's
+  context.
+- **Message tasks.** A recipient set to `start` (and Settings on, and the hop
+  within the limit) gets a headless task titled "Message from Ada" in the
+  sender's folder, `isolation` off, prompt fixed text. A new message joins an
+  unstarted one (same teammate, project and folder) instead; one created while
+  the teammate already has a run in that folder is queued until it ends
+  (`messageTaskWaits`, also checked by the queue drain). **Start a task** on a
+  waiting message does the same by hand, whatever the setting.
+- **UI.** Teammates page tabs: Profile, Memory, Messages (both settings, a box
+  to write to the teammate, the thread in and out with Waiting / Delivered,
+  Open task / Start a task, Delete, long bodies folded), Work. Waiting counts
+  on each teammate and on the header's Teammates button. One toast says what
+  happened to every message of a send (and carries the memory note when a run
+  did both). Task detail lists a message task's messages. Settings → Task
+  board: "Messages can start tasks", "Longest message chain". Deleting a
+  teammate drops the messages sent to it and archives its unstarted message
+  tasks.
+
+**Bugs fixed on the way**
+
+- Two runs of one teammate in one folder shared a memory file, so the second
+  seed overwrote the first run's notes (now a folder per run).
+- Memory files stayed in project folders after runs (now removed).
+- A half-written new-task draft and prompt templates lost their teammate on
+  reload (`normalizeWorkspace` dropped `teammateId`).
+- An agent review of a teammate's task quoted the whole teammate preface
+  ("You are Ada…", memory path) as the original request; runs now record the
+  request on its own (`RunRecord.request`).
+- The board's agent filter ignored a teammate's engine.
+- Closing Crucible while a teammate ran lost its memory: the close now waits
+  for stopped runs' folders to be read before saving.
+- Opening the Teammates page from a toast for a teammate already focused once
+  did nothing (the focus is now a fresh object each time).
+- A teammate name holding `& | < > " % ! ^` would make every teammate prompt
+  unusable by a batch-script agent; such names are now refused (and cleaned on
+  load).
+
+**Verification**
+
+- `npm test` — **96 passed**: 16 new in `tests/messages.test.mjs` (outbox
+  parsing, inbox text, delivery, arrival and chain, message tasks, waiting,
+  normalization, retention) plus new teammate, workspace and review cases.
+  `tests/modules.mjs` now gives every test file the full module list.
+- `npm run build` — passes. `cargo test --offline` — **18 passed** on
+  Windows; the four memory tests became five run-folder tests (names, round
+  trip with mid-run read and removal, files the teammate added are kept,
+  worktree exclusion, non-Git folder).
+- Driven in the vite dev server with the Tauri IPC mock: Ada's headless run
+  wrote to Ben (start), Cleo Park (hold) and an unknown name; one toast
+  reported all three plus her memory update; Ben's message task started with
+  the message in its inbox and only the path in its prompt. Ben's reply waited
+  in Ada's inbox; **Start a task** on it gave Ada an inbox quoting her earlier
+  message. With the chain limit at 2 Ada's next reply waited ("reached its
+  limit of 2"); with message tasks paused an owner message waited too. Cleo's
+  interactive run received two messages, and her outbox was delivered at the
+  end of a turn while the run was still live, once (not again at its end).
+  Messages for Ben while he worked queued one task, which a third message
+  joined and which started with both when he finished. 900×600: no horizontal
+  overflow on the page or header.
+
+- **Version 0.7.0** in `tauri.conf.json`, `Cargo.toml`, `package.json` and both
+  lockfiles, so the next MSI upgrades an installed 0.6.0 in place. `upgradeCode`
+  and `identifier` are unchanged.
+
+**Still owed (native)**
+
+- A real Claude Code and Codex run as a teammate that writes a message: the
+  agent edits `.crucible/<name>-<run>/outbox.md` without a permission prompt
+  (a headless Codex run needs `-s workspace-write` or similar, or it cannot
+  write memory or messages), and the folder is gone from the project after the
+  run.
+- A real message-started task end to end, and closing Crucible during a
+  teammate run (its memory and messages should still arrive).
 
 ## Teammates with per-teammate memory (October 1)
 
