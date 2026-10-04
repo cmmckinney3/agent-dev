@@ -101,6 +101,10 @@ other, since many of their projects share a stack.
   joined and which started with both when he finished. 900×600: no horizontal
   overflow on the page or header.
 
+- **Version 0.7.0** in `tauri.conf.json`, `Cargo.toml`, `package.json` and both
+  lockfiles, so the next MSI upgrades an installed 0.6.0 in place. `upgradeCode`
+  and `identifier` are unchanged.
+
 **Still owed (native)**
 
 - A real Claude Code and Codex run as a teammate that writes a message: the
